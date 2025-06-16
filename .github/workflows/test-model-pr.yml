@@ -9,6 +9,9 @@ on:
       repo_name:
         required: false
         type: string
+      pr_user:
+        required: true
+        type: string
 
 jobs:
   model-test:
@@ -42,7 +45,11 @@ jobs:
           conda run -n base conda install gh -c conda-forge
           conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
 
+      - name: Clone repo
+        run: git clone https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git repo
+
       - name: Fetch model and run test
+        working-directory: repo
         env:
           MODEL_ID: ${{ github.event.repository.name }}
         run: |
@@ -52,6 +59,7 @@ jobs:
           cat $MODEL_ID-test.json
           
       - name: Parse test results
+        working-directory: repo
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
@@ -77,4 +85,4 @@ jobs:
           name: test-results
           retention-days: 14
           path: |
-            ${{ inputs.repo_name }}-test.json
+            repo/${{ inputs.repo_name }}-test.json
