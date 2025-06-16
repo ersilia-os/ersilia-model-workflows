@@ -4,10 +4,10 @@ on:
   workflow_call:
     inputs:
       branch:
-        required: false
+        required: true  # now required to ensure proper checkout
         type: string
       repo_name:
-        required: false
+        required: true  # now required to form full repo reference
         type: string
 
 jobs:
@@ -24,12 +24,22 @@ jobs:
           large-packages: true
           swap-storage: true
 
-      - uses: actions/checkout@v4.2.2
+      - name: Checkout PR branch from fork
+        uses: actions/checkout@v4.2.2
         with:
           lfs: true
-          fetch-depth: 0  # Ensures full history
+          fetch-depth: 0
+          repository: ersilia-os/${{ inputs.repo_name }}  # default fallback
           ref: ${{ inputs.branch }}
-          
+
+      # optionally override repo if coming from a fork
+      - name: Override with fork repo if needed
+        if: github.event_name == 'pull_request_target'
+        run: |
+          echo "Overriding repo with fork source if applicable..."
+          echo "Using repo: ${{ github.event.pull_request.head.repo.full_name }}"
+          echo "Using ref: ${{ github.event.pull_request.head.ref }}"
+
       - uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
@@ -44,13 +54,13 @@ jobs:
 
       - name: Fetch model and run test
         env:
-          MODEL_ID: ${{ github.event.repository.name }}
+          MODEL_ID: ${{ inputs.repo_name }}
         run: |
           conda run -n base bash -c "
             ersilia -v test $MODEL_ID --shallow --from_dir .
           "
           cat $MODEL_ID-test.json
-          
+
       - name: Parse test results
         env:
           MODEL_ID: ${{ inputs.repo_name }}
@@ -65,10 +75,10 @@ jobs:
           echo "Parsing test results from $TEST_JSON"
 
           TEST_FAILED=$(jq 'recurse | objects | select(map(select(. == false)) | length > 0)' "$TEST_JSON")
-              if [[ -n "$TEST_FAILED" ]]; then
-                echo "❌ Some tests failed. Stopping workflow."
-                exit 1
-              fi
+          if [[ -n "$TEST_FAILED" ]]; then
+            echo "❌ Some tests failed. Stopping workflow."
+            exit 1
+          fi
 
       - name: Upload files
         if: always()
