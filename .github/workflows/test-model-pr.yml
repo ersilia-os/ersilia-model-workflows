@@ -56,9 +56,8 @@ jobs:
         env:
           MODEL_ID: ${{ github.event.repository.name }}
         run: |
-          cd $MODEL_ID
           conda run -n base bash -c "
-            ersilia -v test $MODEL_ID --shallow --from_dir .
+            ersilia -v test $MODEL_ID --shallow --from_dir $MODEL_ID
           "
           cat $MODEL_ID-test.json
           
@@ -66,7 +65,6 @@ jobs:
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
-          cd $MODEL_ID
           TEST_JSON="${MODEL_ID}-test.json"
 
           if [[ ! -f "$TEST_JSON" ]]; then
@@ -89,4 +87,4 @@ jobs:
           name: test-results
           retention-days: 14
           path: |
-            ${{ inputs.repo_name }}/${{ inputs.repo_name }}-test.json
+            ${{ inputs.repo_name }}-test.json
