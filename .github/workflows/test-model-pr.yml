@@ -46,7 +46,9 @@ jobs:
           conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
 
       - name: Clone repo
-        run: git clone https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git repo
+        run: |
+          echo "Cloning from https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git"
+          git clone https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git repo
 
       - name: Fetch model and run test
         working-directory: repo
