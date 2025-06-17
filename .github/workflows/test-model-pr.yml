@@ -41,9 +41,12 @@ jobs:
 
       - name: Clone repo
         run: |
+          echo "Cleaning current directory"
+          ls
           rm -rf *
           echo "Cloning from https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git"
           git clone https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git
+          echo "Current directory structure"
           ls
 
       - name: Install dependencies
