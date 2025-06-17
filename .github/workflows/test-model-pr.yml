@@ -43,7 +43,7 @@ jobs:
         run: |
           rm -rf *
           echo "Cloning from https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git"
-          git clone https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git repo
+          git clone https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git
           ls
 
       - name: Install dependencies
@@ -56,7 +56,7 @@ jobs:
         env:
           MODEL_ID: ${{ github.event.repository.name }}
         run: |
-          cd repo
+          cd $MODEL_ID
           conda run -n base bash -c "
             ersilia -v test $MODEL_ID --shallow --from_dir .
           "
@@ -66,7 +66,7 @@ jobs:
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
-          cd repo
+          cd $MODEL_ID
           TEST_JSON="${MODEL_ID}-test.json"
 
           if [[ ! -f "$TEST_JSON" ]]; then
@@ -89,4 +89,4 @@ jobs:
           name: test-results
           retention-days: 14
           path: |
-            repo/${{ inputs.repo_name }}-test.json
+            ${{ inputs.repo_name }}/${{ inputs.repo_name }}-test.json
