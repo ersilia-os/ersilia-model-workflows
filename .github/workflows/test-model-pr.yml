@@ -47,24 +47,25 @@ jobs:
 
       - name: Clone repo
         run: |
+          rm -rf *
           echo "Cloning from https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git"
           git clone https://github.com/${{ inputs.pr_user }}/${{ inputs.repo_name }}.git repo
 
       - name: Fetch model and run test
-        working-directory: repo
         env:
           MODEL_ID: ${{ github.event.repository.name }}
         run: |
+          cd repo
           conda run -n base bash -c "
             ersilia -v test $MODEL_ID --shallow --from_dir .
           "
           cat $MODEL_ID-test.json
           
       - name: Parse test results
-        working-directory: repo
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
+          cd repo
           TEST_JSON="${MODEL_ID}-test.json"
 
           if [[ ! -f "$TEST_JSON" ]]; then
