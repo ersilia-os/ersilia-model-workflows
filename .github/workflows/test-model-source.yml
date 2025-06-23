@@ -66,22 +66,6 @@ jobs:
           echo "METADATA_FILE=$metadata" >> "$GITHUB_ENV"
           echo "Found metadata file: $metadata"
 
-      - name: Add contributor to metadata
-        env:
-          USER_NAME: ${{ github.actor }}  # GitHub username of the person who pushed the commit
-          BRANCH: ${{ inputs.branch }}
-          REPO_NAME: ${{ inputs.repo_name }}
-          METADATA_FILE: ${{ env.METADATA_FILE }}
-        run: |
-          echo "Using repo: $GITHUB_REPOSITORY"
-          echo "Target metadata file: $METADATA_FILE"
-          echo "Contributor username: $USER_NAME"
-      
-          wget -O add_field_to_metadata.py https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/main/.github/scripts/add_field_to_metadata.py
-          python add_field_to_metadata.py --metadata_file $METADATA_FILE --field "Contributor" --content "$USER_NAME"
-          cat $METADATA_FILE
-          rm add_field_to_metadata.py
-
       - name: Add creation date to metadata
         env:
           USER_NAME: ${{ github.repository_owner }}
