@@ -12,10 +12,13 @@ on:
       pr_user:
         required: true
         type: string
+      runner:
+        required: true
+        type: string
 
 jobs:
   model-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main

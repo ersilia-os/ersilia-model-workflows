@@ -6,6 +6,9 @@ on:
       repo_name:
         required: true
         type: string
+      runner:
+        required: true
+        type: string
     secrets:
       DOCKERHUB_USERNAME:
         required: true
@@ -14,7 +17,7 @@ on:
 
 jobs:
   build-ersilia-pack-image-amd64:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
     
       - name: Checkout model repository
@@ -140,7 +143,7 @@ jobs:
   merge-multiarch:
     if: always()  # <-- this ensures the job runs even if needs.* fail
     needs: [build-ersilia-pack-image-amd64, build-ersilia-pack-image-arm64]
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Check build results and fail if both failed
         run: |

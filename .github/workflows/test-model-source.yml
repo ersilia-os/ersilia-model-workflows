@@ -10,6 +10,9 @@ on:
       repo_name:
         required: true
         type: string
+      runner:
+        required: true
+        type: string
     secrets:
       AIRTABLE_API_KEY:
         required: true
@@ -20,7 +23,7 @@ on:
 
 jobs:
   model-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main

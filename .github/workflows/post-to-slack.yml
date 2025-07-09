@@ -5,6 +5,9 @@ on:
       repo_name:
         required: true
         type: string
+      runner:
+        required: true
+        type: string
     secrets:
       SLACK_CHANNEL_TESTER:
         required: true
@@ -13,7 +16,7 @@ on:
 
 jobs:
   slack:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: post slack
         uses: slackapi/slack-github-action@v1.23.0
