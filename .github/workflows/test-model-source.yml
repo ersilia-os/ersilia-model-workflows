@@ -89,23 +89,7 @@ jobs:
           cat $METADATA_FILE
           rm add_field_to_metadata.py
 
-      - name: Decide metadata update to/from Airtable
-        run: |
-          wget -O check_output_consistency.py https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/main/.github/scripts/check_output_consistency.py
-          output_consistency=$(python check_output_consistency.py "$METADATA_FILE")
-          rm check_output_consistency.py
-
-          if [ -n "$output_consistency" ]; then
-            echo "'Output Consistency' exists and has value: $output_consistency"
-            echo "Updating metadata **TO** Airtable."
-            echo "AIRTABLE_ACTION=TO" >> "$GITHUB_ENV"
-          else
-            echo "'Output Consistency' is missing or empty in $METADATA_FILE."
-            echo "Updating metadata **FROM** Airtable."
-            echo "AIRTABLE_ACTION=FROM" >> "$GITHUB_ENV"
-          fi
-
-      - name: Update metadata to or from AirTable
+      - name: Update metadata to AirTable
         env:
           USER_NAME: ${{ github.repository_owner }}
           BRANCH: ${{ inputs.branch }}
@@ -121,16 +105,11 @@ jobs:
             wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/airtableops.py
             wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/readme_formatter.py
 
-            if [[ "$AIRTABLE_ACTION" == "TO" ]]; then
-              echo "Updating metadata to AirTable looking at owner: $USER_NAME"
-              echo "Metadata Content"
-              cat "$METADATA_FILE"
-              conda run -n base python3 airtableops.py airtable-update --user $USER_NAME --repo $REPO_NAME --branch $BRANCH --api-key $AIRTABLE_API_KEY
-            elif [[ "$AIRTABLE_ACTION" == "FROM" ]]; then
-              echo "Updating metadata from AirTable looking at owner: $USER_NAME"
-              conda run -n base python3 airtableops.py metadata-update --repo $REPO_NAME --path . --api-key $AIRTABLE_API_KEY
-            fi
-
+            echo "Updating metadata to AirTable looking at owner: $USER_NAME"
+            echo "Metadata Content"
+            cat "$METADATA_FILE"
+            conda run -n base python3 airtableops.py airtable-update --user $USER_NAME --repo $REPO_NAME --branch $BRANCH --api-key $AIRTABLE_API_KEY
+          
             # remove file
             rm airtableops.py
             rm readme_formatter.py

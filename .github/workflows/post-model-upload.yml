@@ -61,6 +61,11 @@ jobs:
           pip install pyaml
           pip install ruamel.yaml
 
+      - name: Extract Last Packaging Date
+        run: |
+          LAST_PACKAGING_DATE=$(date -u -d "${{ github.run_started_at }}" +%Y-%m-%d)
+          echo "LAST_PACKAGING_DATE=$LAST_PACKAGING_DATE" >> $GITHUB_ENV
+
       - name: Update metadata fields
         env:
           MODEL_ID: ${{ github.event.repository.name }}
@@ -70,6 +75,7 @@ jobs:
           COMPUTATIONAL_PERFORMANCE_3: ${{ env.COMPUTATIONAL_PERFORMANCE_3 }}
           COMPUTATIONAL_PERFORMANCE_4: ${{ env.COMPUTATIONAL_PERFORMANCE_4 }}
           COMPUTATIONAL_PERFORMANCE_5: ${{ env.COMPUTATIONAL_PERFORMANCE_5 }}
+          LAST_PACKAGING_DATE: ${{ env.LAST_PACKAGING_DATE }}
         run: |
           if [[ -f metadata.yml ]]; then
             METADATA_FILE="metadata.yml"
@@ -82,6 +88,7 @@ jobs:
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "DockerHub" --content "https://hub.docker.com/r/ersiliaos/${MODEL_ID}"
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Docker Architecture" --content arch.txt
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Image Size" --content "$IMAGE_SIZE"
+          python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Last Packaging Date" --content "$LAST_PACKAGING_DATE"
           for i in 1 2 3 4 5; do
             FIELD_NAME="Computational Performance ${i}"
             VALUE_VAR="COMPUTATIONAL_PERFORMANCE_${i}"

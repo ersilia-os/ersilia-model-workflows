@@ -74,7 +74,6 @@ new_order = [
     'Subtask',
     'Input',
     'Input Dimension',
-    'Input Shape',
     'Output',
     'Output Dimension',
     'Output Consistency',
@@ -88,19 +87,15 @@ new_order = [
     'Publication',
     'Source Code',
     'License',
-    'Host URL',
     'Contributor',
     'Contributor Profile',
     'Incorporation Date',
     'Incorporation Quarter',
     'Incorporation Year',
+    'Last Packaging Date',
     'S3',
     'DockerHub',
     'Docker Architecture',
-    'DO Deployment',
-    'Biomodel Annotation',
-    'Runtime',
-    'Secrets',
     'Model Size',
     'Environment Size',
     'Image Size',
@@ -108,7 +103,7 @@ new_order = [
     'Computational Performance 2',
     'Computational Performance 3',
     'Computational Performance 4',
-    'Computational Performance 5'
+    'Computational Performance 5',
 ]
 
 if field not in new_order:
