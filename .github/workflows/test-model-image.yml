@@ -6,6 +6,9 @@ on:
       repo_name:
         required: true
         type: string
+      runner:
+        required: true
+        type: string
     outputs:
       retag-success:
         description: "Whether retag-image succeeded"
@@ -18,7 +21,7 @@ on:
 
 jobs:
   test-image-amd64:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     continue-on-error: true
     outputs:
       passed: ${{ steps.check-result.outcome }}
@@ -142,7 +145,7 @@ jobs:
           fi
       
   retag-image:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     needs: [test-image-amd64, test-image-arm64]
     if: always()
     outputs:

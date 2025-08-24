@@ -9,6 +9,9 @@ on:
       repo_name:
         required: true
         type: string
+      runner:
+        required: true
+        type: string
     secrets:
       DOCKERHUB_USERNAME:
         required: true
@@ -17,7 +20,7 @@ on:
 
 jobs:
   build-bentoml-image-amd64:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
 
       - name: Checkout repository
@@ -169,7 +172,7 @@ jobs:
   
   merge-multiarch:
     needs: [build-bentoml-image-amd64, build-bentoml-image-arm64]
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     if: ${{ needs.build-bentoml-image-amd64.result == 'success' || needs.build-bentoml-image-arm64.result == 'success' }}
     steps:
       - name: Login to Docker Hub
