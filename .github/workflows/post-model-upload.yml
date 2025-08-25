@@ -31,6 +31,40 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+      
+      - name: Check if any tag exists
+        id: check-tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Returns first tag name or empty string if none
+          TAG="$(gh api repos/${{ github.repository }}/tags --paginate -q '.[0].name' || true)"
+          if [[ -n "$TAG" ]]; then
+            echo "has_tags=true"  >> "$GITHUB_OUTPUT"
+            echo "TAG=${TAG}" >> $GITHUB_ENV
+            echo "Found existing tag: $TAG"
+          else
+            echo "has_tags=false" >> "$GITHUB_OUTPUT"
+            echo "No tags found in repository."
+          fi
+
+      - name: Create initial v1.0.0 release (only if no tags exist)
+        if: steps.check-tags.outputs.has_tags == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # If this workflow was triggered by workflow_run, use the upstream run's head_sha; otherwise use this run's sha.
+          TARGET_SHA="${{ github.sha }}"
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            TARGET_SHA="${{ github.event.workflow_run.head_sha }}"
+          fi
+          TAG="v1.0.0"
+          echo "TAG=${TAG}" >> $GITHUB_ENV
+          echo "Creating initial release ${TAG} at ${TARGET_SHA}"
+          gh release create "${TAG}" \
+            --target "${TARGET_SHA}" \
+            --title "Release ${TAG}" \
+            --generate-notes
 
       - name: Download architecture file
         uses: actions/download-artifact@v4
@@ -79,6 +113,7 @@ jobs:
           COMPUTATIONAL_PERFORMANCE_4: ${{ env.COMPUTATIONAL_PERFORMANCE_4 }}
           COMPUTATIONAL_PERFORMANCE_5: ${{ env.COMPUTATIONAL_PERFORMANCE_5 }}
           LAST_PACKAGING_DATE: ${{ env.LAST_PACKAGING_DATE }}
+          TAG : ${{ env.TAG }}
         run: |
           if [[ -f metadata.yml ]]; then
             METADATA_FILE="metadata.yml"
@@ -92,6 +127,7 @@ jobs:
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Docker Architecture" --content arch.txt
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Image Size" --content "$IMAGE_SIZE"
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Last Packaging Date" --content "$LAST_PACKAGING_DATE"
+          python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Release" --content "$TAG"
           for i in 1 2 3 4 5; do
             FIELD_NAME="Computational Performance ${i}"
             VALUE_VAR="COMPUTATIONAL_PERFORMANCE_${i}"
