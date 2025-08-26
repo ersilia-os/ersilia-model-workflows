@@ -1,0 +1,115 @@
+name: Retag image on release
+
+on:
+  workflow_call:
+    inputs:
+      repo_name:
+        required: true
+        type: string
+      release_tag:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_PASSWORD:
+        required: true
+      AIRTABLE_API_KEY:
+        required: true
+      AWS_ACCESS_KEY:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    env:
+      MODEL: ${{ inputs.repo_name }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Retag latest -> release tag
+        run: |
+          echo "Retagging ersiliaos/${MODEL}:latest as ersiliaos/${MODEL}:${RELEASE_TAG}"
+          docker buildx imagetools create \
+            --tag ersiliaos/${MODEL}:${RELEASE_TAG} \
+            ersiliaos/${MODEL}:latest
+          echo "Done."
+      
+      - name: Update metadata field
+        env:
+          TAG : ${{ inputs.release_tag }}
+        run: |
+          if [[ -f metadata.yml ]]; then
+            METADATA_FILE="metadata.yml"
+          else
+            METADATA_FILE="metadata.json"
+          fi
+          wget -O add_field_to_metadata.py https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/main/.github/scripts/add_field_to_metadata.py
+          python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Release" --content "$TAG"
+          cat "$METADATA_FILE"
+          rm add_field_to_metadata.py
+          
+      - name: Commit and push changes done to the Metadata file
+        uses: actions-js/push@master # pin@v1.4
+        with:
+          author_name: "ersilia-bot"
+          author_email: "ersilia-bot@users.noreply.github.com"
+          message: "updating metadata [skip ci]"
+          repository: "ersilia-os/${{ github.event.repository.name }}"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Setup conda
+      - name: Setup conda
+        id: setupConda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: "3.12"
+  
+      # Install ersilia
+      - name: Install dependencies in Conda environment
+        id: installDependenciesInConda
+        run: |
+          conda run -n base conda install gh -c conda-forge
+          conda run -n base python -m pip install git+https://github.com/ersilia-os/ersilia.git
+
+      - name: Update metadata to AirTable
+        id: update-metadata-to-airtable
+        env:
+          USER_NAME: ${{ github.repository_owner }}
+          BRANCH: "main"
+          REPO_NAME: ${{ github.event.repository.name }}
+          AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+        run: |
+          conda run -n base pip install requests pyairtable
+          echo "Updating metadata to AirTable looking at owner: $USER_NAME"
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/airtableops.py
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/readme_formatter.py
+          conda run -n base python3 airtableops.py airtable-update --user $USER_NAME --repo $REPO_NAME --branch $BRANCH --api-key $AIRTABLE_API_KEY
+          rm airtableops.py
+          rm readme_formatter.py
+  
+      - name: sync metadata to S3 JSON
+        id: sync-metadata-to-s3
+        env:
+          AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/convert_airtable_to_json.py
+          conda run -n base pip install boto3 requests pyairtable
+          conda run -n base python convert_airtable_to_json.py $AIRTABLE_API_KEY $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
+          rm convert_airtable_to_json.py
+ 
