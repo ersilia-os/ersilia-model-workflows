@@ -93,6 +93,7 @@ new_order = [
     'Incorporation Quarter',
     'Incorporation Year',
     'Last Packaging Date',
+    'Release',
     'S3',
     'DockerHub',
     'Docker Architecture',
