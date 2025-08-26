@@ -51,6 +51,11 @@ jobs:
             ersiliaos/${MODEL}:latest
           echo "Done."
       
+      - name: Install pyaml and ruamel.yaml
+        run: |
+          pip install pyaml
+          pip install ruamel.yaml
+
       - name: Update metadata field
         env:
           TAG : ${{ inputs.release_tag }}
