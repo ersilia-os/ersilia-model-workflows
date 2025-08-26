@@ -3,6 +3,10 @@ name: Retag image on release
 on:
   workflow_call:
     inputs:
+      branch:
+        required: false
+        type: string
+        default: "main"
       repo_name:
         required: true
         type: string
