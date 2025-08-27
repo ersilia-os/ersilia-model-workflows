@@ -32,6 +32,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      
       - name: Check if any tag exists
         id: check-tags
         env:
@@ -75,11 +78,13 @@ jobs:
       
       - name: Retag latest -> release tag
         if: steps.check-tags.outputs.has_tags == 'false'
+        env:
+          MODEL_ID: ${{ inputs.repo_name }}
         run: |
-          echo "Retagging ersiliaos/${MODEL}:latest as ersiliaos/${MODEL}:${RELEASE_TAG}"
+          echo "Retagging ersiliaos/${MODEL_ID}:latest as ersiliaos/${MODEL_ID}:${TAG}"
           docker buildx imagetools create \
-            --tag ersiliaos/${MODEL}:${RELEASE_TAG} \
-            ersiliaos/${MODEL}:latest
+            --tag ersiliaos/${MODEL_ID}:${TAG} \
+            ersiliaos/${MODEL_ID}:latest
           echo "Done."
 
       - name: Download architecture file
