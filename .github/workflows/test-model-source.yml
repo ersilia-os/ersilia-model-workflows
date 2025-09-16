@@ -20,7 +20,8 @@ on:
         required: true
       AWS_SECRET_ACCESS_KEY:
         required: true
-
+      EOS_READ_TOKEN:
+        required: true
 jobs:
   model-test:
     runs-on: ${{ inputs.runner }}
