@@ -20,8 +20,6 @@ on:
         required: true
       AWS_SECRET_ACCESS_KEY:
         required: true
-      GIT_CREDENTIALS:
-        required: true
 jobs:
   model-test:
     runs-on: ${{ inputs.runner }}
