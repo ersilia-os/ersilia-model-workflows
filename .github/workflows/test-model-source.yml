@@ -20,7 +20,7 @@ on:
         required: true
       AWS_SECRET_ACCESS_KEY:
         required: true
-      EOS_READ_TOKEN:
+      GIT_CREDENTIALS:
         required: true
 jobs:
   model-test:
@@ -55,7 +55,7 @@ jobs:
           
       - name: Configure Git for cross-repo LFS
         env:
-          TOKEN: ${{ secrets.EOS_READ_TOKEN }}
+          TOKEN: ${{ secrets.GIT_CREDENTIALS }}
         run: |
           git lfs install --local
           git config --global url."https://${TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
