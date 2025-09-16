@@ -51,13 +51,21 @@ jobs:
           conda run -n base conda install gh -c conda-forge
           conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
           
-      - name: Authenticate gh for git
+      - name: Configure GitHub credentials for all HTTPS clones (LFS-safe)
         env:
-          GH_TOKEN: ${{ secrets.GIT_CREDENTIALS }}
+          TOKEN: ${{ secrets.GIT_CREDENTIALS }} 
         run: |
-          gh auth setup-git
-          git lfs install --local
-
+          umask 077
+          {
+            echo "machine github.com"
+            echo "  login x-access-token"
+            echo "  password $TOKEN"
+          } > ~/.netrc
+          chmod 600 ~/.netrc
+      
+          git config --global core.askPass true
+          git config --global credential.interactive never
+          export GIT_TERMINAL_PROMPT=0
           
       - name: Install pyaml and ruamel.yaml
         run: |
