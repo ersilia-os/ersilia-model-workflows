@@ -35,10 +35,9 @@ jobs:
           large-packages: true
           swap-storage: true
 
-      - uses: actions/checkout@v5.0.0
+      - uses: actions/checkout@v4.2.2
         with:
           lfs: true
-          fetch-depth: 0
           
       - uses: conda-incubator/setup-miniconda@v3
         with:
