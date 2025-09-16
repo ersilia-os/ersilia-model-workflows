@@ -51,13 +51,13 @@ jobs:
           conda run -n base conda install gh -c conda-forge
           conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
           
-      - name: Configure Git for cross-repo LFS
+      - name: Authenticate gh for git
         env:
-          TOKEN: ${{ secrets.GIT_CREDENTIALS }}
+          GH_TOKEN: ${{ secrets.GIT_CREDENTIALS }}
         run: |
+          gh auth setup-git
           git lfs install --local
-          git config --global url."https://${TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
-          git config --global credential.helper ""
+
           
       - name: Install pyaml and ruamel.yaml
         run: |
