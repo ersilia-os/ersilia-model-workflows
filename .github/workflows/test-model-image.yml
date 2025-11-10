@@ -20,30 +20,88 @@ on:
         required: true
 
 jobs:
+  # test-image-amd64:
+  #   runs-on: ${{ inputs.runner }}
+  #   continue-on-error: true
+  #   outputs:
+  #     passed: ${{ steps.check-result.outcome }}
+  #   steps:
+  #     - name: Set up conda
+  #       uses: conda-incubator/setup-miniconda@v3
+  #       with:
+  #         auto-update-conda: true
+  #         python-version: "3.12"
+  #         auto-activate-base: false
+
+  #     - name: Install dependencies
+  #       run: |
+  #         conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
+
+  #     - name: Test AMD64 image
+  #       env:
+  #         MODEL_ID: ${{ inputs.repo_name }}
+  #       run: |
+  #         conda run -n base bash -c "
+  #           ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-amd64
+  #         "
+      
+  #     - name: Rename test results JSON
+  #       env:
+  #         MODEL_ID: ${{ inputs.repo_name }}
+  #       run: |
+  #         TEST_JSON="${MODEL_ID}-test.json"
+
+  #         if [[ ! -f "$TEST_JSON" ]]; then
+  #           echo "Error: Test results file $TEST_JSON not found!"
+  #           exit 1
+  #         fi
+
+  #         mv "$TEST_JSON" "${MODEL_ID}-test-amd64.json"
+  #         echo "TEST_JSON_AMD64=${MODEL_ID}-test-amd64.json" >> "$GITHUB_ENV"
+
+  #     - name: Upload logs as artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: test-report-amd64
+  #         path: ${{ env.TEST_JSON_AMD64 }}
+
+  #     - name: Parse test results
+  #       id: check-result
+  #       env:
+  #         MODEL_ID: ${{ inputs.repo_name }}
+  #       run: |
+  #         TEST_JSON="${MODEL_ID}-test-amd64.json"
+  #         echo "Parsing test results from $TEST_JSON"
+
+  #         TEST_FAILED=$(jq 'recurse | objects | select(map(select(. == false)) | length > 0)' "$TEST_JSON")
+  #         if [[ -n "$TEST_FAILED" ]]; then
+  #           echo "❌ Some tests failed. Stopping workflow."
+  #           exit 1
+  #         fi
   test-image-amd64:
     runs-on: ${{ inputs.runner }}
     continue-on-error: true
     outputs:
       passed: ${{ steps.check-result.outcome }}
     steps:
-      - name: Set up conda
-        uses: conda-incubator/setup-miniconda@v3
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          auto-update-conda: true
           python-version: "3.12"
-          auto-activate-base: false
 
-      - name: Install dependencies
+      - name: Install nox
         run: |
-          conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
+          python -m pip install --upgrade pip
+          pip install nox
 
-      - name: Test AMD64 image
+      - name: Run tests with nox (AMD64)
         env:
           MODEL_ID: ${{ inputs.repo_name }}
+          MODEL_VERSION: dev-amd64
         run: |
-          conda run -n base bash -c "
-            ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-amd64
-          "
+          nox -f ersilia/publish/test/noxfile.py -s test_model_image
       
       - name: Rename test results JSON
         env:
