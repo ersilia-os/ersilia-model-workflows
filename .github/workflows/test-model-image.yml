@@ -101,7 +101,11 @@ jobs:
           MODEL_ID: ${{ inputs.repo_name }}
           MODEL_VERSION: dev-amd64
         run: |
-          nox -f ersilia/publish/test/noxfile.py -s test_model_image
+          curl -L https://raw.githubusercontent.com/ersilia-os/ersilia/master/ersilia/publish/test/noxfile.py -o noxfile.py
+          
+          ls -l noxfile.py
+          head -n 20 noxfile.py
+          nox -f noxfile.py -s test_model_image
       
       - name: Rename test results JSON
         env:
