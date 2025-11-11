@@ -9,40 +9,23 @@ on:
       runner:
         required: true
         type: string
-    outputs:
-      retag-success:
-        description: "Whether retag-image succeeded"
-        value: ${{ jobs.retag-image.outputs.status }}
     secrets:
       DOCKERHUB_USERNAME:
         required: true
       DOCKERHUB_PASSWORD:
         required: true
+    outputs:
+      retag-success:
+        description: "Whether retag-image succeeded"
+        value: ${{ jobs.retag-image.outputs.status }}
 
 jobs:
   test-image-amd64:
     runs-on: ${{ inputs.runner }}
     continue-on-error: true
-    env:
-      PIP_NO_CACHE_DIR: "1"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      CONDA_PKGS_DIRS: ${{ runner.temp }}/conda_pkgs
     outputs:
       passed: ${{ steps.check-result.outcome }}
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: true
-
-      - name: Show disk before
-        run: df -h && echo && du -sh /usr/share/miniconda || true
-
       - name: Set up conda
         uses: conda-incubator/setup-miniconda@v3
         with:
@@ -52,8 +35,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          conda run -n base python -m pip install --no-cache-dir 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
-          conda run -n base python -m pip cache purge || true
+          conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
 
       - name: Test AMD64 image
         env:
@@ -62,23 +44,18 @@ jobs:
           conda run -n base bash -c "
             ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-amd64
           "
-
-      - name: Clean caches (AMD64)
-        if: always()
-        run: |
-          conda clean -afy || true
-          rm -rf ~/.cache/pip || true
-          df -h
-
+      
       - name: Rename test results JSON
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
           TEST_JSON="${MODEL_ID}-test.json"
+
           if [[ ! -f "$TEST_JSON" ]]; then
             echo "Error: Test results file $TEST_JSON not found!"
             exit 1
           fi
+
           mv "$TEST_JSON" "${MODEL_ID}-test-amd64.json"
           echo "TEST_JSON_AMD64=${MODEL_ID}-test-amd64.json" >> "$GITHUB_ENV"
 
@@ -95,9 +72,10 @@ jobs:
         run: |
           TEST_JSON="${MODEL_ID}-test-amd64.json"
           echo "Parsing test results from $TEST_JSON"
+
           TEST_FAILED=$(jq 'recurse | objects | select(map(select(. == false)) | length > 0)' "$TEST_JSON")
           if [[ -n "$TEST_FAILED" ]]; then
-            echo "❌ Some tests failed. Stopping workflow."
+            echo "Some tests failed. Stopping workflow."
             exit 1
           fi
 
@@ -106,26 +84,12 @@ jobs:
     needs: test-image-amd64
     if: always()
     continue-on-error: true
-    env:
-      PIP_NO_CACHE_DIR: "1"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      CONDA_PKGS_DIRS: ${{ runner.temp }}/conda_pkgs
     outputs:
       passed: ${{ steps.check-result.outcome }}
     steps:
-      - name: Free Disk Space (ARM64)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: true
-
-      - name: Show disk before
-        run: df -h && echo && du -sh /home/runner/miniconda3 || true
-
+      - name: print architecture
+        run: |
+          echo "Architecture: $(uname -m)"
       - name: Set up conda
         uses: conda-incubator/setup-miniconda@v3
         with:
@@ -135,9 +99,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          conda run -n base python -m pip install --no-cache-dir 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
+          conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
           conda run -n base ersilia --version
-          conda run -n base python -m pip cache purge || true
 
       - name: Test ARM64 image
         env:
@@ -147,13 +110,40 @@ jobs:
             ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-arm64
           "
 
-      - name: Clean caches (ARM64)
-        if: always()
+      - name: Rename test results JSON
+        env:
+          MODEL_ID: ${{ inputs.repo_name }}
         run: |
-          conda clean -afy || true
-          rm -rf ~/.cache/pip || true
-          df -h
+          TEST_JSON="${MODEL_ID}-test.json"
 
+          if [[ ! -f "$TEST_JSON" ]]; then
+            echo "Error: Test results file $TEST_JSON not found!"
+            exit 1
+          fi
+
+          mv "$TEST_JSON" "${MODEL_ID}-test-arm64.json"
+          echo "TEST_JSON_ARM64=${MODEL_ID}-test-arm64.json" >> "$GITHUB_ENV"
+
+      - name: Upload logs as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-arm64
+          path: ${{ env.TEST_JSON_ARM64 }}
+
+      - name: Parse test results
+        id: check-result
+        env:
+          MODEL_ID: ${{ inputs.repo_name }}
+        run: |
+          TEST_JSON="${MODEL_ID}-test-arm64.json"
+          echo "Parsing test results from $TEST_JSON"
+
+          TEST_FAILED=$(jq 'recurse | objects | select(map(select(. == false)) | length > 0)' "$TEST_JSON")
+          if [[ -n "$TEST_FAILED" ]]; then
+            echo "Some tests failed. Stopping workflow."
+            exit 1
+          fi
+      
   retag-image:
     runs-on: ${{ inputs.runner }}
     needs: [test-image-amd64, test-image-arm64]
@@ -163,11 +153,13 @@ jobs:
     steps:
       - name: Check if AMD successful
         if: ${{ needs.test-image-amd64.outputs.passed == 'success' }}
-        run: echo "AMD64" > amd.txt
+        run: |
+          echo "AMD64" > amd.txt
       
       - name: Check if ARM successful
         if: ${{ needs.test-image-arm64.outputs.passed == 'success' }}
-        run: echo "ARM64" > arm.txt
+        run: |
+          echo "ARM64" > arm.txt
       
       - name: Login to Docker Hub
         uses: docker/login-action@v1
@@ -183,9 +175,9 @@ jobs:
           if [[ -f amd.txt || -f arm.txt ]]; then
             echo "Tagging image with date and as latest"
             docker buildx imagetools create \
-              --tag "ersiliaos/$MODEL:$(date +%Y-%m-%d)" \
-              --tag "ersiliaos/$MODEL:latest" \
-              "ersiliaos/$MODEL:dev"
+              --tag ersiliaos/$MODEL:$(date +%Y-%m-%d) \
+              --tag ersiliaos/$MODEL:latest \
+              ersiliaos/$MODEL:dev
             echo "Successfully retagged multi-architecture image."
           else
             echo "Image test failed, keeping the dev tag"
@@ -195,8 +187,16 @@ jobs:
       - name: Determine Architecture and Save to arch.txt
         run: |
           ARCH=""
-          [[ -f amd.txt ]] && ARCH="AMD64"
-          [[ -f arm.txt ]] && ARCH="${ARCH:+$ARCH,}ARM64"
+          if [[ -f amd.txt ]]; then
+            ARCH="AMD64"
+          fi
+          if [[ -f arm.txt ]]; then
+            if [[ -n "$ARCH" ]]; then
+              ARCH="$ARCH,ARM64"
+            else
+              ARCH="ARM64"
+            fi
+          fi
           echo "$ARCH" > arch.txt
           cat arch.txt 
 
