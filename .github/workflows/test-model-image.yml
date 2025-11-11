@@ -41,11 +41,9 @@ jobs:
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
-          bash -l -c '
-            eval "$("$(command -v conda)" shell.bash hook)"
-            conda deactivate || true
-            ersilia -v test "$MODEL_ID" --deep --from_dockerhub --version dev-amd64
-          '
+          conda run -n base bash -c "
+            ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-amd64
+          "
       
       - name: Rename test results JSON
         env:
@@ -108,11 +106,9 @@ jobs:
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
-          bash -l -c '
-            eval "$("$(command -v conda)" shell.bash hook)"
-            conda deactivate || true
-            ersilia -v test "$MODEL_ID" --deep --from_dockerhub --version dev-arm64
-          '
+          conda run -n base bash -c "
+            ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-arm64
+          "
 
       - name: Rename test results JSON
         env:
