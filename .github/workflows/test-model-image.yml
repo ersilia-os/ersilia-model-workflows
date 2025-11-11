@@ -105,7 +105,7 @@ jobs:
           
           ls -l noxfile.py
           head -n 20 noxfile.py
-          nox -f noxfile.py -s test_model_image
+          nox -f noxfile.py -s test_model_image -- $MODEL_ID "dev-amd64"
       
       - name: Rename test results JSON
         env:
