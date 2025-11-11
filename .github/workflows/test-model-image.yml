@@ -101,11 +101,14 @@ jobs:
           MODEL_ID: ${{ inputs.repo_name }}
           MODEL_VERSION: dev-amd64
         run: |
-          curl -L https://raw.githubusercontent.com/ersilia-os/ersilia/master/ersilia/publish/test/noxfile.py -o noxfile.py
+          git clone --depth 1 https://github.com/ersilia-os/ersilia.git
+          cd ersilia
+          nox -f test/playground/noxfile.py -s execute -p 3.10 -- --single $MODEL_ID --cli test from_dockerhub version dev-amd64 --test
+          # curl -L https://raw.githubusercontent.com/ersilia-os/ersilia/master/ersilia/publish/test/noxfile.py -o noxfile.py
           
-          ls -l noxfile.py
-          head -n 20 noxfile.py
-          nox -f noxfile.py -s test_model_image -- $MODEL_ID "dev-amd64"
+          # ls -l noxfile.py
+          # head -n 20 noxfile.py
+          # nox -f noxfile.py -s test_model_image -- $MODEL_ID "dev-amd64"
       
       - name: Rename test results JSON
         env:
