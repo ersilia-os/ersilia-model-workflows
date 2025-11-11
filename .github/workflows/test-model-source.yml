@@ -165,11 +165,9 @@ jobs:
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
-          bash -l -c '
-            eval "$("$(command -v conda)" shell.bash hook)"
-            conda deactivate || true
+          conda run -n base bash -c "
             ersilia -v test $MODEL_ID --shallow --from_github
-          '
+          "
           cat $MODEL_ID-test.json
 
       - name: Upload test result for analysis
