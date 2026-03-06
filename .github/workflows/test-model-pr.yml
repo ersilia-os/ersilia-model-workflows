@@ -61,11 +61,13 @@ jobs:
       - name: Fetch model and run test
         env:
           MODEL_ID: ${{ github.event.repository.name }}
+          PYTHONUNBUFFERED: "1"
         run: |
           conda run -n base bash -c "
-            ersilia -v test $MODEL_ID --shallow --from_dir $MODEL_ID
+            PYTHONUNBUFFERED=1 ersilia -v test $MODEL_ID --shallow --from_dir $MODEL_ID
           "
           cat $MODEL_ID-test.json
+
           
       - name: Parse test results
         env:
