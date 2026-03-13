@@ -28,7 +28,7 @@ jobs:
           dotnet: true
           haskell: true
           large-packages: true
-          swap-storage: true
+          swap-storage: false
 
       - uses: actions/checkout@v4.2.2
         with:
@@ -54,6 +54,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          (while true; do free -m; sleep 30; done) &
           conda run -n base git-lfs install
           conda run -n base conda install gh -c conda-forge
           conda run -n base python -m pip install 'ersilia[test] @ git+https://github.com/ersilia-os/ersilia.git'
