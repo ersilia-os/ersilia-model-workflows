@@ -64,8 +64,9 @@ jobs:
           MODEL_ID: ${{ github.event.repository.name }}
           PYTHONUNBUFFERED: "1"
         run: |
+          (while true; do echo "Memory usage:"; free -m; sleep 30; done) &
           conda run -n base bash -c "
-            PYTHONUNBUFFERED=1 ersilia -v test $MODEL_ID --shallow --from_dir $MODEL_ID
+            ersilia -v test $MODEL_ID --shallow --from_dir $MODEL_ID
           "
           cat $MODEL_ID-test.json
 
