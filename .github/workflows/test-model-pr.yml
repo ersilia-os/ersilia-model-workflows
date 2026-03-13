@@ -56,7 +56,7 @@ jobs:
         run: |
           conda run -n base git-lfs install
           conda run -n base conda install gh -c conda-forge
-          conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
+          conda run -n base python -m pip install 'ersilia[test] @ git+https://github.com/ersilia-os/ersilia.git'
 
       - name: Fetch model and run test
         env:
