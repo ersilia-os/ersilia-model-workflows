@@ -45,7 +45,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          conda run -n base python -m pip install 'git+https://github.com/ersilia-os/ersilia.git#egg=ersilia[test]'
+          conda run -n base python -m pip install "ersilia[test] @ git+https://github.com/ersilia-os/ersilia.git"
 
       - name: Test AMD64 image
         env:
