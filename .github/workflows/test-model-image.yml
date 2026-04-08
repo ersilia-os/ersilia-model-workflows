@@ -52,7 +52,7 @@ jobs:
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
-          conda run -n base bash -c "
+          conda run --no-capture-output -n base bash -c "
             ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-amd64
           "
       
