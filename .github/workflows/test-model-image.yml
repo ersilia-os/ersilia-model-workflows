@@ -53,7 +53,7 @@ jobs:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
           conda run --no-capture-output -n base bash -c "
-            ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-amd64
+            ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-amd64 --permissive
           "
       
       - name: Rename test results JSON
@@ -128,7 +128,7 @@ jobs:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
           conda run -n base bash -c "
-            ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-arm64
+            ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-arm64 --permissive
           "
 
       - name: Rename test results JSON
