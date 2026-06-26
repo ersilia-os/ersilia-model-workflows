@@ -58,6 +58,20 @@ jobs:
           conda run -n base git-lfs install
           conda run -n base conda install gh -c conda-forge
           conda run -n base python -m pip install 'ersilia[test] @ git+https://github.com/ersilia-os/ersilia.git'
+          conda run -n base python -m pip install eosvc
+          
+      - name: Download checkpoints
+        env:
+          MODEL_ID: ${{ github.event.repository.name }}
+        run: |
+          cd $MODEL_ID
+          if [ -f "access.json" ]; then
+            echo "access.json detected. Downloading model checkpoints"
+            conda run -n base eosvc download --path .
+          else
+            echo "No access.json found. Skipping eosvc download."
+          fi
+          cd ..
 
       - name: Fetch model and run test
         env:
