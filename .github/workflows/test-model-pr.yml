@@ -41,6 +41,7 @@ jobs:
           auto-update-conda: true
           python-version: "3.12"
           auto-activate-base: false
+          activate-environment: test
 
       - name: Clone repo
         run: |
@@ -55,10 +56,10 @@ jobs:
       - name: Install dependencies
         run: |
           (while true; do free -m; sleep 30; done) &
-          conda run -n base git-lfs install
-          conda run -n base conda install gh -c conda-forge
-          conda run -n base python -m pip install 'ersilia[test] @ git+https://github.com/ersilia-os/ersilia.git'
-          conda run -n base python -m pip install eosvc
+          conda run -n test git-lfs install
+          conda run -n test conda install gh -c conda-forge
+          conda run -n test python -m pip install 'ersilia[test] @ git+https://github.com/ersilia-os/ersilia.git'
+          conda run -n test python -m pip install eosvc
           
       - name: Download checkpoints
         env:
@@ -67,7 +68,7 @@ jobs:
           cd $MODEL_ID
           if [ -f "access.json" ]; then
             echo "access.json detected. Downloading model checkpoints"
-            conda run -n base eosvc download --path .
+            conda run -n test eosvc download --path .
           else
             echo "No access.json found. Skipping eosvc download."
           fi
@@ -78,7 +79,7 @@ jobs:
           MODEL_ID: ${{ github.event.repository.name }}
           PYTHONUNBUFFERED: "1"
         run: |
-          conda run -n base bash -c "
+          conda run -n test bash -c "
             ersilia -v test $MODEL_ID --shallow --from_dir $MODEL_ID
           "
           cat $MODEL_ID-test.json
