@@ -44,12 +44,13 @@ jobs:
           auto-update-conda: true
           python-version: "3.12"
           auto-activate-base: false
+          activate-environment: test   
 
       - name: Install dependencies
         run: |
-          conda run -n base git-lfs install
-          conda run -n base conda install gh -c conda-forge
-          conda run -n base python -m pip install "ersilia[test] @ git+https://github.com/ersilia-os/ersilia.git"
+          conda run -n test git-lfs install
+          conda run -n test conda install gh -c conda-forge
+          conda run -n test python -m pip install "ersilia[test] @ git+https://github.com/ersilia-os/ersilia.git"
           
       - name: Install pyaml and ruamel.yaml
         run: |
@@ -104,14 +105,14 @@ jobs:
           max_attempts: 3
           command: |
             set -e  # Ensure failure stops execution
-            conda run -n base pip install requests pyairtable
+            conda run -n test pip install requests pyairtable
             wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/airtableops.py
             wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/readme_formatter.py
 
             echo "Updating metadata to AirTable looking at owner: $USER_NAME"
             echo "Metadata Content"
             cat "$METADATA_FILE"
-            conda run -n base python3 airtableops.py airtable-update --user $USER_NAME --repo $REPO_NAME --branch $BRANCH --api-key $AIRTABLE_API_KEY
+            conda run -n test python3 airtableops.py airtable-update --user $USER_NAME --repo $REPO_NAME --branch $BRANCH --api-key $AIRTABLE_API_KEY
           
             # remove file
             rm airtableops.py
@@ -133,8 +134,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/convert_airtable_to_json.py
-          conda run -n base pip install boto3 requests pyairtable
-          conda run -n base python convert_airtable_to_json.py $AIRTABLE_API_KEY $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
+          conda run -n test pip install boto3 requests pyairtable
+          conda run -n test python convert_airtable_to_json.py $AIRTABLE_API_KEY $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
           rm convert_airtable_to_json.py
 
       - name: Update README file
@@ -142,7 +143,7 @@ jobs:
         env:
           MODEL_ID: ${{ github.event.repository.name }}
         run: |
-          conda run -n base bash -c "
+          conda run -n test bash -c "
             echo 'Updating README file with AirTable metadata for model: $MODEL_ID' &&
             wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/airtableops.py &&
             wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/readme_formatter.py &&
@@ -165,7 +166,7 @@ jobs:
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
-          conda run -n base bash -c "
+          conda run -n test bash -c "
             ersilia -v test $MODEL_ID --shallow --from_github
           "
           cat $MODEL_ID-test.json
