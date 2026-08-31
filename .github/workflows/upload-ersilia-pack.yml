@@ -58,7 +58,7 @@ jobs:
         run: |
           if [ -f "access.json" ]; then
             echo "access.json detected. Installing eosvc and downloading artifacts."
-            pip install "eosvc>=1.1.0"
+            pip install "eosvc>=1.3.0"
             eosvc download --path .
           else
             echo "No access.json found. Skipping eosvc download."
