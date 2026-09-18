@@ -13,6 +13,10 @@ on:
       runner:
         required: true
         type: string
+      auto_release:
+        required: false
+        type: boolean
+        default: false
     secrets:
       AIRTABLE_API_KEY:
         required: true
@@ -24,6 +28,8 @@ on:
         required: true
       DOCKERHUB_PASSWORD:
         required: true
+permissions:
+  contents: write
 jobs:
   post-model-upload:
     runs-on: ${{ inputs.runner }}
@@ -31,53 +37,117 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout release decision tool
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .workflow-tools
+          persist-credentials: false
       
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Check if any tag exists
-        id: check-tags
+      - name: Resolve validated model commit
+        env:
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          git fetch --no-tags origin "${TARGET_SHA}" --depth=1
+          echo "TARGET_SHA=${TARGET_SHA}" >> "$GITHUB_ENV"
+
+      - name: Find latest published release
+        id: latest-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Returns first tag name or empty string if none
-          TAG="$(gh api repos/${{ github.repository }}/tags --paginate -q '.[0].name' || true)"
-          if [[ -n "$TAG" ]]; then
-            echo "has_tags=true"  >> "$GITHUB_OUTPUT"
-            echo "TAG=${TAG}" >> $GITHUB_ENV
-            echo "Found existing tag: $TAG"
-          else
-            echo "has_tags=false" >> "$GITHUB_OUTPUT"
-            echo "No tags found in repository."
+          RELEASE_TAG="$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
+            -q '[.[] | select(.draft == false and .prerelease == false) | .tag_name] | .[0] // empty' || true)"
+          if [[ -n "${RELEASE_TAG}" ]]; then
+            echo "has_release=true" >> "$GITHUB_OUTPUT"
+            echo "has_tag=true" >> "$GITHUB_OUTPUT"
+            echo "TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
+            echo "Found latest published release: ${RELEASE_TAG}"
+            exit 0
           fi
 
-      - name: Create initial v1.0.0 release (only if no tags exist)
-        if: steps.check-tags.outputs.has_tags == 'false'
+          TAG="$(git tag --list 'v*' --sort=-version:refname | while read -r candidate; do
+            if [[ "${candidate}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "${candidate}"
+              break
+            fi
+          done)"
+          echo "has_release=false" >> "$GITHUB_OUTPUT"
+          if [[ -n "${TAG}" ]]; then
+            echo "has_tag=true" >> "$GITHUB_OUTPUT"
+            echo "TAG=${TAG}" >> "$GITHUB_ENV"
+            echo "Found existing version tag without a release: ${TAG}"
+          else
+            echo "has_tag=false" >> "$GITHUB_OUTPUT"
+            echo "No published release or version tag found."
+          fi
+
+      - name: Create initial release
+        if: steps.latest-release.outputs.has_release == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # If this workflow was triggered by workflow_run, use the upstream run's head_sha; otherwise use this run's sha.
-          TARGET_SHA="${{ github.sha }}"
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            TARGET_SHA="${{ github.event.workflow_run.head_sha }}"
+          if [[ "${{ steps.latest-release.outputs.has_tag }}" == "true" ]]; then
+            echo "Publishing a release for the existing tag ${TAG}"
+            gh release create "${TAG}" \
+              --verify-tag \
+              --title "Release ${TAG}" \
+              --generate-notes
+          else
+            TAG="v1.0.0"
+            echo "TAG=${TAG}" >> "$GITHUB_ENV"
+            echo "Creating initial release ${TAG} at ${TARGET_SHA}"
+            gh release create "${TAG}" \
+              --target "${TARGET_SHA}" \
+              --title "Release ${TAG}" \
+              --generate-notes
           fi
-          TAG="v1.0.0"
-          echo "TAG=${TAG}" >> $GITHUB_ENV
-          echo "Creating initial release ${TAG} at ${TARGET_SHA}"
-          gh release create "${TAG}" \
-            --target "${TARGET_SHA}" \
-            --title "Release ${TAG}" \
-            --generate-notes
+
+      - name: Decide whether a new model release is needed
+        id: release-decision
+        if: steps.latest-release.outputs.has_release == 'true' && inputs.auto_release
+        run: |
+          python .workflow-tools/.github/scripts/release_decision.py \
+            --repo . \
+            --base-tag "${TAG}" \
+            --target "${TARGET_SHA}" >> "$GITHUB_OUTPUT"
+
+          echo "Release decision:"
+          cat "$GITHUB_OUTPUT"
+
+      - name: Create automatic model release
+        if: steps.release-decision.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release-decision.outputs.tag }}
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; leaving it unchanged."
+          else
+            echo "Creating ${RELEASE_TAG} at ${TARGET_SHA}"
+            gh release create "${RELEASE_TAG}" \
+              --target "${TARGET_SHA}" \
+              --title "Release ${RELEASE_TAG}" \
+              --generate-notes
+          fi
+          echo "TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
       
       - name: Login to Docker Hub
-        if: steps.check-tags.outputs.has_tags == 'false'
+        if: steps.latest-release.outputs.has_release == 'false'
         uses: docker/login-action@v1
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
       
       - name: Retag latest -> release tag
-        if: steps.check-tags.outputs.has_tags == 'false'
+        if: steps.latest-release.outputs.has_release == 'false'
         env:
           MODEL_ID: ${{ inputs.repo_name }}
         run: |
@@ -247,4 +317,3 @@ jobs:
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
           repository: ersiliaos/${{ github.event.repository.name }}
           short-description: "Ersilia Model Hub Identifier: ${{ github.event.repository.name }}"
- 

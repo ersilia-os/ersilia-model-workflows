@@ -22,6 +22,18 @@ Below is a high-level summary of the workflows contained in this repository.
 | 8    | `post-to-slack.yml`         | Posts a comment on Slack when a new issue is opened in the model repository. |
 | 9    | `create-new-issue.yml`      | Creates an issue when a model is updated to assign a tester. This workflow is currently unused and will only be activated during intense model refactoring or incorporation periods. |
 
+### Automatic model releases
+
+`post-model-upload.yml` can create semantic model releases after a successful image
+test. Set its `auto_release` input to `true` from the model repository workflow to
+enable this behavior. The workflow compares the validated model commit with the
+latest published release and creates the next major version only when
+`model/framework/examples/run_output.csv` or
+`model/framework/columns/run_columns.csv` changes. Metadata-only commits and
+workflow reruns are therefore idempotent. The first successful upload creates
+`v1.0.0`; existing version tags without GitHub releases are promoted instead of
+being duplicated.
+
 ## License
 
 The code in this repository is available under a GPLv3 License. 
