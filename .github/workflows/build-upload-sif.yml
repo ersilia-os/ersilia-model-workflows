@@ -14,6 +14,13 @@ on:
       runner:
         required: true
         type: string
+      branch:
+        # TESTING PHASE: models under test must have an apptainer-test branch.
+        # Change the default back to "main" before this goes live.
+        description: "Branch of the model repository to read metadata from and commit to"
+        required: false
+        type: string
+        default: "apptainer-test"
       ersilia_apptainer_ref:
         description: "Git ref of ersilia-apptainer to install"
         required: false
