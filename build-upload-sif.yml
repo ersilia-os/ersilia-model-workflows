@@ -1,0 +1,292 @@
+name: Build and upload Apptainer image
+
+on:
+  workflow_call:
+    inputs:
+      repo_name:
+        description: "Repository name of the model"
+        required: true
+        type: string
+      version:
+        description: "Docker image tag to build from (e.g. v2.0.1); only the major part names the .sif"
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+      ersilia_apptainer_ref:
+        description: "Git ref of ersilia-apptainer to install"
+        required: false
+        type: string
+        default: "e4004721f90b23a0da7920da191e74aae52739d8"
+      dry_run:
+        description: "Build and smoke test only: no upload, no metadata, Airtable or README changes"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      AWS_ACCESS_KEY:
+        required: false
+      AWS_SECRET_ACCESS_KEY:
+        required: false
+      AIRTABLE_API_KEY:
+        required: false
+    outputs:
+      apptainer-url:
+        description: "Public URL of the uploaded .sif, empty if the build was skipped"
+        value: ${{ jobs.build-sif.outputs.url }}
+
+jobs:
+  build-sif:
+    runs-on: ${{ inputs.runner }}
+    env:
+      MODEL_ID: ${{ inputs.repo_name }}
+      VERSION: ${{ inputs.version }}
+      SIF_BUCKET: models-sif
+      SIF_REGION: eu-north-1
+    outputs:
+      url: ${{ steps.upload.outputs.url }}
+    steps:
+      # Read the model from ersilia-os/<model>, so the workflow can also be tried
+      # from a test branch or another repository
+      - name: Checkout model repository
+        uses: actions/checkout@v4.2.2
+        with:
+          repository: ersilia-os/${{ inputs.repo_name }}
+          ref: main
+          persist-credentials: false
+          lfs: false
+
+      - name: Pull with rebase
+        run: |
+          git pull --rebase origin main
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      # After freeing disk space, which also clears the runner's Python tool cache
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pyaml and ruamel.yaml
+        run: |
+          pip install pyaml
+          pip install ruamel.yaml
+
+      # The runner builds the amd64 image. :latest (and so the version tag) can contain an
+      # amd64 image that failed its deep test, so only build if AMD64 is recorded as passing.
+      - name: Check AMD64 passed the image test
+        id: arch
+        run: |
+          python - <<'EOF'
+          import json, os
+          path = "metadata.yml" if os.path.exists("metadata.yml") else "metadata.json"
+          with open(path) as f:
+              if path.endswith(".json"):
+                  data = json.load(f)
+              else:
+                  import yaml
+                  data = yaml.safe_load(f)
+          arch = data.get("Docker Architecture") or []
+          if isinstance(arch, str):
+              arch = [a.strip() for a in arch.split(",")]
+          ok = "AMD64" in arch
+          print(f"Docker Architecture: {arch}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"amd64={'true' if ok else 'false'}\n")
+          EOF
+
+      - name: Skip notice
+        if: steps.arch.outputs.amd64 != 'true'
+        run: |
+          echo "::warning::${MODEL_ID} has no passing AMD64 image; skipping the Apptainer build."
+
+      - name: Set paths
+        if: steps.arch.outputs.amd64 == 'true'
+        run: |
+          MAJOR="v${VERSION#v}"
+          MAJOR="${MAJOR%%.*}"
+          SIF_NAME="${MODEL_ID}_${MAJOR}.sif"
+          # Build scratch on /mnt, the runner's larger disk; outputs stay outside the
+          # workspace so the later commit steps cannot pick them up.
+          WORK_DIR=/mnt/apptainer
+          sudo mkdir -p "$WORK_DIR/tmp" "$WORK_DIR/cache" "$WORK_DIR/out"
+          sudo chown -R "$USER" "$WORK_DIR"
+          {
+            echo "SIF_NAME=$SIF_NAME"
+            echo "SIF_PATH=$WORK_DIR/out/$SIF_NAME"
+            echo "WORK_DIR=$WORK_DIR"
+            echo "APPTAINER_TMPDIR=$WORK_DIR/tmp"
+            echo "APPTAINER_CACHEDIR=$WORK_DIR/cache"
+            echo "SIF_URL=https://${SIF_BUCKET}.s3.${SIF_REGION}.amazonaws.com/${SIF_NAME}"
+          } >> "$GITHUB_ENV"
+          df -h /mnt /
+
+      - name: Install Apptainer
+        if: steps.arch.outputs.amd64 == 'true'
+        run: |
+          sudo add-apt-repository -y ppa:apptainer/ppa
+          sudo apt-get update
+          sudo apt-get install -y apptainer
+          # ersilia-apptainer calls `singularity`; the apptainer package normally ships it
+          if ! command -v singularity >/dev/null; then
+            sudo ln -s "$(command -v apptainer)" /usr/local/bin/singularity
+          fi
+          singularity --version
+
+      - name: Install ersilia-apptainer
+        if: steps.arch.outputs.amd64 == 'true'
+        run: |
+          pip install "git+https://github.com/ersilia-os/ersilia-apptainer.git@${{ inputs.ersilia_apptainer_ref }}"
+
+      # Built as root: unprivileged builds rely on user namespaces, which the
+      # Ubuntu 24.04 runners restrict.
+      - name: Build .sif
+        if: steps.arch.outputs.amd64 == 'true'
+        run: |
+          sudo -E env "PATH=$PATH" ersilia_apptainer create \
+            --model "$MODEL_ID" \
+            --version "$VERSION" \
+            --output-dir "$WORK_DIR/out"
+          sudo chown "$USER" "$SIF_PATH"
+          ls -lh "$SIF_PATH"
+
+      - name: Smoke test
+        if: steps.arch.outputs.amd64 == 'true'
+        run: |
+          EXAMPLES=/opt/ersilia/model/framework/examples
+          singularity exec "$SIF_PATH" cat "$EXAMPLES/run_input.csv" > "$WORK_DIR/input.csv" \
+            || singularity exec "$SIF_PATH" cat "$EXAMPLES/input.csv" > "$WORK_DIR/input.csv"
+          singularity exec "$SIF_PATH" cat "$EXAMPLES/run_output.csv" > "$WORK_DIR/expected.csv" 2>/dev/null \
+            || singularity exec "$SIF_PATH" cat "$EXAMPLES/output.csv" > "$WORK_DIR/expected.csv" 2>/dev/null \
+            || true
+
+          ersilia_apptainer run \
+            --sif "$SIF_PATH" \
+            --input "$WORK_DIR/input.csv" \
+            --output "$WORK_DIR/output.csv"
+
+          # ersilia_apptainer already checks the row count; also check the columns
+          python - <<'EOF'
+          import csv, os
+          work = os.environ["WORK_DIR"]
+          def header(path):
+              with open(path) as f:
+                  cols = next(csv.reader(f), [])
+              return [c for c in cols if c not in ("key", "input")]
+          got = header(f"{work}/output.csv")
+          expected_path = f"{work}/expected.csv"
+          if os.path.getsize(expected_path) == 0:
+              print("::warning::No example output in the image; skipping the column check.")
+          else:
+              expected = header(expected_path)
+              if got != expected:
+                  raise SystemExit(f"Output columns differ from the example output:\n  got:      {got}\n  expected: {expected}")
+          print(f"Output columns OK: {got}")
+          EOF
+
+      - name: Dry run notice
+        if: steps.arch.outputs.amd64 == 'true' && inputs.dry_run
+        run: |
+          echo "::notice::Dry run: ${SIF_NAME} built and smoke-tested; skipping upload and metadata updates."
+
+      - name: Upload to S3
+        id: upload
+        if: steps.arch.outputs.amd64 == 'true' && !inputs.dry_run
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws s3 cp "$SIF_PATH" "s3://${SIF_BUCKET}/${SIF_NAME}" --region "$SIF_REGION"
+          curl -sfI "$SIF_URL" > /dev/null || { echo "Uploaded, but $SIF_URL is not publicly reachable"; exit 1; }
+          echo "url=$SIF_URL" >> "$GITHUB_OUTPUT"
+          echo "Uploaded $SIF_URL"
+
+      - name: Update metadata field
+        if: steps.upload.outcome == 'success'
+        run: |
+          if [[ -f metadata.yml ]]; then
+            METADATA_FILE="metadata.yml"
+          else
+            METADATA_FILE="metadata.json"
+          fi
+          wget -O add_field_to_metadata.py https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/main/.github/scripts/add_field_to_metadata.py
+          python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Apptainer" --content "$SIF_URL"
+          cat "$METADATA_FILE"
+          rm add_field_to_metadata.py
+
+      - name: Commit and push metadata changes
+        if: steps.upload.outcome == 'success'
+        uses: actions-js/push@master
+        with:
+          author_name: "ersilia-bot"
+          author_email: "ersilia-bot@users.noreply.github.com"
+          message: "updating metadata [skip ci]"
+          repository: ${{ github.repository }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup conda
+        if: steps.upload.outcome == 'success'
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: "3.12"
+
+      - name: Install dependencies in Conda environment
+        if: steps.upload.outcome == 'success'
+        run: |
+          conda run -n base python -m pip install git+https://github.com/ersilia-os/ersilia.git
+          conda run -n base pip install requests pyairtable boto3
+
+      # Reads metadata.yml from GitHub, so it must run after the commit above
+      - name: Update metadata to AirTable
+        if: steps.upload.outcome == 'success'
+        env:
+          USER_NAME: ${{ github.repository_owner }}
+          REPO_NAME: ${{ inputs.repo_name }}
+          AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+        run: |
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/airtableops.py
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/readme_formatter.py
+          conda run -n base python3 airtableops.py airtable-update --user $USER_NAME --repo $REPO_NAME --branch main --api-key $AIRTABLE_API_KEY
+          rm airtableops.py
+          rm readme_formatter.py
+
+      - name: Sync metadata to S3 JSON
+        if: steps.upload.outcome == 'success'
+        env:
+          AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/convert_airtable_to_json.py
+          conda run -n base python convert_airtable_to_json.py $AIRTABLE_API_KEY $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
+          rm convert_airtable_to_json.py
+
+      - name: Update README file
+        if: steps.upload.outcome == 'success'
+        run: |
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/airtableops.py
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/readme_formatter.py
+          conda run -n base python3 airtableops.py readme-update --repo $MODEL_ID --path .
+          rm airtableops.py
+          rm readme_formatter.py
+
+      - name: Commit and push README changes
+        if: steps.upload.outcome == 'success'
+        uses: actions-js/push@master
+        with:
+          author_name: "ersilia-bot"
+          author_email: "ersilia-bot@users.noreply.github.com"
+          message: "updating readme [skip ci]"
+          repository: ${{ github.repository }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
