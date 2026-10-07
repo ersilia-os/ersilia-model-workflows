@@ -19,6 +19,11 @@ on:
         required: false
         type: string
         default: "e4004721f90b23a0da7920da191e74aae52739d8"
+      scripts_ref:
+        description: "Branch of ersilia-model-workflows to take helper scripts from"
+        required: false
+        type: string
+        default: "main"
       dry_run:
         description: "Build and smoke test only: no upload, no metadata, Airtable or README changes"
         required: false
@@ -219,7 +224,7 @@ jobs:
           else
             METADATA_FILE="metadata.json"
           fi
-          wget -O add_field_to_metadata.py https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/main/.github/scripts/add_field_to_metadata.py
+          wget -O add_field_to_metadata.py https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/${{ inputs.scripts_ref }}//.github/scripts/add_field_to_metadata.py
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Apptainer" --content "$SIF_URL"
           cat "$METADATA_FILE"
           rm add_field_to_metadata.py
