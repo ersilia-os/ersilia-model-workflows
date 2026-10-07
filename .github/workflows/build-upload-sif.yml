@@ -30,7 +30,12 @@ on:
         description: "Branch of ersilia-model-workflows to take helper scripts from"
         required: false
         type: string
-        default: "main"
+        default: "apptainer-sif"
+      ersilia_ref:
+        description: "Branch of ersilia to install and take the Airtable/README scripts from"
+        required: false
+        type: string
+        default: "apptainer-sif"
       dry_run:
         description: "Build and smoke test only: no upload, no metadata, Airtable or README changes"
         required: false
@@ -65,25 +70,14 @@ jobs:
         uses: actions/checkout@v4.2.2
         with:
           repository: ersilia-os/${{ inputs.repo_name }}
-          ref: main
+          ref: ${{ inputs.branch }}
           persist-credentials: false
           lfs: false
 
       - name: Pull with rebase
         run: |
-          git pull --rebase origin main
+          git pull --rebase origin "${{ inputs.branch }}"
 
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: true
-
-      # After freeing disk space, which also clears the runner's Python tool cache
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -128,11 +122,9 @@ jobs:
           MAJOR="v${VERSION#v}"
           MAJOR="${MAJOR%%.*}"
           SIF_NAME="${MODEL_ID}_${MAJOR}.sif"
-          # Build scratch on /mnt, the runner's larger disk; outputs stay outside the
-          # workspace so the later commit steps cannot pick them up.
-          WORK_DIR=/mnt/apptainer
-          sudo mkdir -p "$WORK_DIR/tmp" "$WORK_DIR/cache" "$WORK_DIR/out"
-          sudo chown -R "$USER" "$WORK_DIR"
+          # Outside the workspace so the later commit steps cannot pick up build files
+          WORK_DIR="$RUNNER_TEMP/apptainer"
+          mkdir -p "$WORK_DIR/tmp" "$WORK_DIR/cache" "$WORK_DIR/out"
           {
             echo "SIF_NAME=$SIF_NAME"
             echo "SIF_PATH=$WORK_DIR/out/$SIF_NAME"
@@ -141,7 +133,7 @@ jobs:
             echo "APPTAINER_CACHEDIR=$WORK_DIR/cache"
             echo "SIF_URL=https://${SIF_BUCKET}.s3.${SIF_REGION}.amazonaws.com/${SIF_NAME}"
           } >> "$GITHUB_ENV"
-          df -h /mnt /
+          df -h "$RUNNER_TEMP"
 
       - name: Install Apptainer
         if: steps.arch.outputs.amd64 == 'true'
@@ -231,7 +223,7 @@ jobs:
           else
             METADATA_FILE="metadata.json"
           fi
-          wget -O add_field_to_metadata.py https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/${{ inputs.scripts_ref }}//.github/scripts/add_field_to_metadata.py
+          wget -O add_field_to_metadata.py https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/${{ inputs.scripts_ref }}/.github/scripts/add_field_to_metadata.py
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Apptainer" --content "$SIF_URL"
           cat "$METADATA_FILE"
           rm add_field_to_metadata.py
@@ -244,6 +236,7 @@ jobs:
           author_email: "ersilia-bot@users.noreply.github.com"
           message: "updating metadata [skip ci]"
           repository: ${{ github.repository }}
+          branch: ${{ inputs.branch }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup conda
@@ -256,7 +249,7 @@ jobs:
       - name: Install dependencies in Conda environment
         if: steps.upload.outcome == 'success'
         run: |
-          conda run -n base python -m pip install git+https://github.com/ersilia-os/ersilia.git
+          conda run -n base python -m pip install "git+https://github.com/ersilia-os/ersilia.git@${{ inputs.ersilia_ref }}"
           conda run -n base pip install requests pyairtable boto3
 
       # Reads metadata.yml from GitHub, so it must run after the commit above
@@ -267,9 +260,9 @@ jobs:
           REPO_NAME: ${{ inputs.repo_name }}
           AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
         run: |
-          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/airtableops.py
-          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/readme_formatter.py
-          conda run -n base python3 airtableops.py airtable-update --user $USER_NAME --repo $REPO_NAME --branch main --api-key $AIRTABLE_API_KEY
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/${{ inputs.ersilia_ref }}/.github/scripts/airtableops.py
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/${{ inputs.ersilia_ref }}/.github/scripts/readme_formatter.py
+          conda run -n base python3 airtableops.py airtable-update --user $USER_NAME --repo $REPO_NAME --branch "${{ inputs.branch }}" --api-key $AIRTABLE_API_KEY
           rm airtableops.py
           rm readme_formatter.py
 
@@ -280,15 +273,15 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/convert_airtable_to_json.py
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/${{ inputs.ersilia_ref }}/.github/scripts/convert_airtable_to_json.py
           conda run -n base python convert_airtable_to_json.py $AIRTABLE_API_KEY $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
           rm convert_airtable_to_json.py
 
       - name: Update README file
         if: steps.upload.outcome == 'success'
         run: |
-          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/airtableops.py
-          wget https://raw.githubusercontent.com/ersilia-os/ersilia/master/.github/scripts/readme_formatter.py
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/${{ inputs.ersilia_ref }}/.github/scripts/airtableops.py
+          wget https://raw.githubusercontent.com/ersilia-os/ersilia/${{ inputs.ersilia_ref }}/.github/scripts/readme_formatter.py
           conda run -n base python3 airtableops.py readme-update --repo $MODEL_ID --path .
           rm airtableops.py
           rm readme_formatter.py
@@ -301,4 +294,5 @@ jobs:
           author_email: "ersilia-bot@users.noreply.github.com"
           message: "updating readme [skip ci]"
           repository: ${{ github.repository }}
+          branch: ${{ inputs.branch }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
