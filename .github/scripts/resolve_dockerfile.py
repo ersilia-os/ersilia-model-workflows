@@ -15,13 +15,27 @@ PY_VERSION_MAP = {
 }
 
 model_id = sys.argv[2]
-def resolve_parser():
+# cpu (default) uses the 'commands' of install.yml, gpu its 'gpu' section
+DEVICE = sys.argv[3] if len(sys.argv) > 3 else "cpu"
+# Overridable to test templates that are not on ersilia master yet
+TEMPLATES_URL = os.environ.get(
+    "ERSILIA_DOCKERFILES_URL",
+    "https://raw.githubusercontent.com/ersilia-os/ersilia/master/dockerfiles/dockerize-ersiliapack/model",
+)
+
+def resolve_parser(device="cpu"):
     if os.path.exists(os.path.abspath(os.path.join(REPO_PATH, "Dockerfile"))):
-        return DockerfileInstallParser(file_dir=REPO_PATH)
+        return DockerfileInstallParser(file_dir=REPO_PATH, device=device)
     elif os.path.exists(os.path.join(REPO_PATH, "install.yml")):
-        return YAMLInstallParser(file_dir=REPO_PATH)
+        return YAMLInstallParser(file_dir=REPO_PATH, device=device)
     else:
         raise ValueError("No install file found")
+
+def set_gpu_output(has_gpu):
+    # Lets the workflow skip the GPU build for models without a gpu section
+    if "GITHUB_OUTPUT" in os.environ:
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"gpu={str(has_gpu).lower()}\n")
     
 def resolve_python_version(parser):
     return parser._get_python_version()
@@ -29,11 +43,11 @@ def resolve_python_version(parser):
 def read_dockerfile(parser):
     commands = parser._get_commands()
     has_conda = parser._has_conda(commands)
-    if has_conda:
-        file_url = "https://raw.githubusercontent.com/ersilia-os/ersilia/master/dockerfiles/dockerize-ersiliapack/model/Dockerfile.conda"
-    else:
-        file_url = "https://raw.githubusercontent.com/ersilia-os/ersilia/master/dockerfiles/dockerize-ersiliapack/model/Dockerfile.pip"
+    flavor = "conda" if has_conda else "pip"
+    suffix = "-gpu" if parser.device == "gpu" else ""
+    file_url = f"{TEMPLATES_URL}/Dockerfile.{flavor}{suffix}"
     response = requests.get(file_url)
+    response.raise_for_status()
     return response.text
 
 def write_version_and_model_id(file_content, python_version):
@@ -50,7 +64,13 @@ def write_version_and_model_id(file_content, python_version):
         f.write(text)
 
 if __name__ == "__main__":
-    parser = resolve_parser()
+    if DEVICE == "gpu":
+        has_gpu = resolve_parser().has_gpu()
+        set_gpu_output(has_gpu)
+        if not has_gpu:
+            print(f"{model_id} has no gpu section in install.yml: no GPU image to build")
+            sys.exit(0)
+    parser = resolve_parser(DEVICE)
     python_version = resolve_python_version(parser)
     dockerfile = read_dockerfile(parser)
     write_version_and_model_id(dockerfile, python_version)
