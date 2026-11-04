@@ -19,8 +19,9 @@ Below is a high-level summary of the workflows contained in this repository.
 | 5    | `upload-bentoml.yml`        | If the image cannot be built with ersilia-pack, defaults to BentoML images. Tries AMD64 and ARM64 builds and tags them as dev. |
 | 6    | `test-model-image.yml`      | Uses `ersilia test --deep` to test development images of the model and, if successful, retags them as latest in Ersilia's [Docker repository](https://hub.docker.com/orgs/ersiliaos). If only one image (AMD64 or ARM64) is built successfully, only that one is tagged as latest. |
 | 7    | `post-model-upload.yml`     | After dev images are retagged as latest, updates the metadata file, README, and Airtable with the Docker URL, image size, and computational performance from `test --deep`. |
-| 8    | `post-to-slack.yml`         | Posts a comment on Slack when a new issue is opened in the model repository. |
-| 9    | `create-new-issue.yml`      | Creates an issue when a model is updated to assign a tester. This workflow is currently unused and will only be activated during intense model refactoring or incorporation periods. |
+| 8    | `build-upload-sif.yml`      | If the AMD64 image passed `test-model-image.yml`, converts it into an Apptainer (Singularity) `.sif` image with [ersilia-apptainer](https://github.com/ersilia-os/ersilia-apptainer), runs a smoke test, uploads it to the `models-sif` S3 bucket, and updates the metadata file, Airtable, and README with the Apptainer URL. Runs after a new release (`retag-release-docker.yml`) and for new models (v1.0.0). |
+| 9    | `post-to-slack.yml`         | Posts a comment on Slack when a new issue is opened in the model repository. |
+| 10   | `create-new-issue.yml`      | Creates an issue when a model is updated to assign a tester. This workflow is currently unused and will only be activated during intense model refactoring or incorporation periods. |
 
 ## License
 

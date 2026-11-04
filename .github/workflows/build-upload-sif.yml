@@ -193,14 +193,9 @@ jobs:
           print(f"Output columns OK: {got}")
           EOF
 
-      - name: Dry run notice
-        if: steps.arch.outputs.amd64 == 'true' && inputs.dry_run
-        run: |
-          echo "::notice::Dry run: ${SIF_NAME} built and smoke-tested; skipping upload and metadata updates."
-
       - name: Upload to S3
         id: upload
-        if: steps.arch.outputs.amd64 == 'true' && !inputs.dry_run
+        if: steps.arch.outputs.amd64 == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
