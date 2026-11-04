@@ -20,7 +20,7 @@ on:
         description: "Branch of the model repository to read metadata from and commit to"
         required: false
         type: string
-        default: "apptainer-test"
+        default: "main"
       ersilia_apptainer_ref:
         description: "Git ref of ersilia-apptainer to install"
         required: false
@@ -30,17 +30,12 @@ on:
         description: "Branch of ersilia-model-workflows to take helper scripts from"
         required: false
         type: string
-        default: "apptainer-sif"
+        default: "main"
       ersilia_ref:
         description: "Branch of ersilia to install and take the Airtable/README scripts from"
         required: false
         type: string
-        default: "apptainer-sif"
-      dry_run:
-        description: "Build and smoke test only: no upload, no metadata, Airtable or README changes"
-        required: false
-        type: boolean
-        default: false
+        default: "master"
     secrets:
       AWS_ACCESS_KEY:
         required: false
