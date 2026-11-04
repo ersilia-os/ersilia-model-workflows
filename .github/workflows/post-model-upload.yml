@@ -24,9 +24,15 @@ on:
         required: true
       DOCKERHUB_PASSWORD:
         required: true
+    outputs:
+      created-release:
+        description: "'true' if this run created the initial v1.0.0 release"
+        value: ${{ jobs.post-model-upload.outputs.created-release }}
 jobs:
   post-model-upload:
     runs-on: ${{ inputs.runner }}
+    outputs:
+      created-release: ${{ steps.check-tags.outputs.has_tags == 'false' }}
     steps:
 
       - name: Checkout repository
