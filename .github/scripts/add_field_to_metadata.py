@@ -97,6 +97,7 @@ new_order = [
     'S3',
     'DockerHub',
     'Docker Architecture',
+    'Apptainer',
     'Model Size',
     'Environment Size',
     'Image Size',
