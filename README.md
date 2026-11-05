@@ -23,6 +23,23 @@ Below is a high-level summary of the workflows contained in this repository.
 | 9    | `post-to-slack.yml`         | Posts a comment on Slack when a new issue is opened in the model repository. |
 | 10   | `create-new-issue.yml`      | Creates an issue when a model is updated to assign a tester. This workflow is currently unused and will only be activated during intense model refactoring or incorporation periods. |
 
+## GPU Images
+
+A model can declare a GPU install with a `gpu:` key in its `install.yml`. `.github/scripts/resolve_dockerfile.py` prepares the Dockerfile for either image:
+
+```bash
+python resolve_dockerfile.py <repo_path> <model_id> [cpu|gpu]   # cpu by default
+```
+
+- `cpu` uses the `commands:` of `install.yml` and the `Dockerfile.pip` / `Dockerfile.conda` templates, as before.
+- `gpu` uses the `gpu:` list and the `Dockerfile.pip-gpu` / `Dockerfile.conda-gpu` templates from [ersilia](https://github.com/ersilia-os/ersilia), which pack the model with `ersilia_model_pack --device gpu` and set `ERSILIA_DEVICE=gpu`.
+- If the model has no `gpu:` key, `gpu` mode writes no Dockerfile and exits with code 0. In GitHub Actions it writes `gpu=true` or `gpu=false` to `GITHUB_OUTPUT`, so a workflow can skip the GPU build.
+- `ERSILIA_DOCKERFILES_URL` overrides where the templates are downloaded from (ersilia `master` by default), to test templates before they are merged.
+
+The `Device` metadata field (`CPU`, `GPU`) is accepted by `add_field_to_metadata.py` and placed after `Docker Architecture`.
+
+No workflow calls the `gpu` mode yet: building and publishing `-gpu` images in CI is still to be added.
+
 ## License
 
 The code in this repository is available under a GPLv3 License. 
