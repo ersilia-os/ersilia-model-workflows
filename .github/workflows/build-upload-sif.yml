@@ -36,6 +36,11 @@ on:
         required: false
         type: string
         default: "master"
+      device:
+        description: "cpu, or gpu to build <model>_<major>-gpu.sif from the <version>-gpu image (no metadata update)"
+        required: false
+        type: string
+        default: "cpu"
     secrets:
       AWS_ACCESS_KEY:
         required: false
@@ -54,6 +59,7 @@ jobs:
     env:
       MODEL_ID: ${{ inputs.repo_name }}
       VERSION: ${{ inputs.version }}
+      DEVICE: ${{ inputs.device }}
       SIF_BUCKET: models-sif
       SIF_REGION: eu-north-1
     outputs:
@@ -85,7 +91,8 @@ jobs:
 
       # The runner builds the amd64 image. :latest (and so the version tag) can contain an
       # amd64 image that failed its deep test, so only build if AMD64 is recorded as passing.
-      - name: Check AMD64 passed the image test
+      # For gpu, the Device field must list GPU (the GPU image is amd64 only).
+      - name: Check the image passed its test
         id: arch
         run: |
           python - <<'EOF'
@@ -100,28 +107,40 @@ jobs:
           arch = data.get("Docker Architecture") or []
           if isinstance(arch, str):
               arch = [a.strip() for a in arch.split(",")]
-          ok = "AMD64" in arch
           print(f"Docker Architecture: {arch}")
+          ok = "AMD64" in arch
+          if os.environ["DEVICE"] == "gpu":
+              device = data.get("Device") or []
+              if isinstance(device, str):
+                  device = [d.strip() for d in device.strip("[]").split(",")]
+              print(f"Device: {device}")
+              ok = "GPU" in device
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"amd64={'true' if ok else 'false'}\n")
+              f.write(f"build={'true' if ok else 'false'}\n")
           EOF
 
       - name: Skip notice
-        if: steps.arch.outputs.amd64 != 'true'
+        if: steps.arch.outputs.build != 'true'
         run: |
-          echo "::warning::${MODEL_ID} has no passing AMD64 image; skipping the Apptainer build."
+          echo "::warning::${MODEL_ID} has no passing ${DEVICE^^} image; skipping the Apptainer build."
 
       - name: Set paths
-        if: steps.arch.outputs.amd64 == 'true'
+        if: steps.arch.outputs.build == 'true'
         run: |
           MAJOR="v${VERSION#v}"
           MAJOR="${MAJOR%%.*}"
           SIF_NAME="${MODEL_ID}_${MAJOR}.sif"
+          IMAGE_TAG="$VERSION"
+          if [[ "$DEVICE" == "gpu" ]]; then
+            SIF_NAME="${MODEL_ID}_${MAJOR}-gpu.sif"
+            IMAGE_TAG="${VERSION}-gpu"
+          fi
           # Outside the workspace so the later commit steps cannot pick up build files
           WORK_DIR="$RUNNER_TEMP/apptainer"
           mkdir -p "$WORK_DIR/tmp" "$WORK_DIR/cache" "$WORK_DIR/out"
           {
             echo "SIF_NAME=$SIF_NAME"
+            echo "IMAGE_TAG=$IMAGE_TAG"
             echo "SIF_PATH=$WORK_DIR/out/$SIF_NAME"
             echo "WORK_DIR=$WORK_DIR"
             echo "APPTAINER_TMPDIR=$WORK_DIR/tmp"
@@ -130,8 +149,20 @@ jobs:
           } >> "$GITHUB_ENV"
           df -h "$RUNNER_TEMP"
 
+      # GPU images are several GB and the build needs about three times that
+      - name: Free Disk Space (Ubuntu)
+        if: steps.arch.outputs.build == 'true' && inputs.device == 'gpu'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
       - name: Install Apptainer
-        if: steps.arch.outputs.amd64 == 'true'
+        if: steps.arch.outputs.build == 'true'
         run: |
           sudo add-apt-repository -y ppa:apptainer/ppa
           sudo apt-get update
@@ -143,19 +174,24 @@ jobs:
           singularity --version
 
       - name: Install ersilia-apptainer
-        if: steps.arch.outputs.amd64 == 'true'
+        if: steps.arch.outputs.build == 'true'
         run: |
           pip install "git+https://github.com/ersilia-os/ersilia-apptainer.git@${{ inputs.ersilia_apptainer_ref }}"
 
       # Built as root: unprivileged builds rely on user namespaces, which the
       # Ubuntu 24.04 runners restrict.
       - name: Build .sif
-        if: steps.arch.outputs.amd64 == 'true'
+        if: steps.arch.outputs.build == 'true'
         run: |
           sudo -E env "PATH=$PATH" ersilia_apptainer create \
             --model "$MODEL_ID" \
-            --version "$VERSION" \
+            --version "$IMAGE_TAG" \
             --output-dir "$WORK_DIR/out"
+          # ersilia_apptainer names the file after the major version only
+          BUILT="$WORK_DIR/out/$(basename "${SIF_PATH/-gpu.sif/.sif}")"
+          if [[ "$BUILT" != "$SIF_PATH" ]]; then
+            sudo mv "$BUILT" "$SIF_PATH"
+          fi
           sudo chown "$USER" "$SIF_PATH"
           ls -lh "$SIF_PATH"
 
@@ -163,11 +199,22 @@ jobs:
       # user namespaces. Ubuntu 24.04+ runners block them through AppArmor;
       # HPC Apptainer installs allow them, so lift the restriction here.
       - name: Allow unprivileged user namespaces
-        if: steps.arch.outputs.amd64 == 'true'
+        if: steps.arch.outputs.build == 'true'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # The runner has no GPU, so main_gpu.py cannot run: check the image selects it
+      - name: Smoke test (GPU)
+        if: steps.arch.outputs.build == 'true' && inputs.device == 'gpu'
+        run: |
+          singularity exec "$SIF_PATH" sh -c '
+            set -e
+            test "$ERSILIA_DEVICE" = gpu || { echo "ERSILIA_DEVICE is not gpu"; exit 1; }
+            ls /opt/ersilia/bundles/*/*/model/framework/code/main_gpu.py
+          '
+          echo "Structural checks passed. No GPU on this runner: inference was not tested."
+
       - name: Smoke test
-        if: steps.arch.outputs.amd64 == 'true'
+        if: steps.arch.outputs.build == 'true' && inputs.device != 'gpu'
         run: |
           EXAMPLES=/opt/ersilia/model/framework/examples
           singularity exec "$SIF_PATH" cat "$EXAMPLES/run_input.csv" > "$WORK_DIR/input.csv" \
@@ -202,7 +249,7 @@ jobs:
 
       - name: Upload to S3
         id: upload
-        if: steps.arch.outputs.amd64 == 'true'
+        if: steps.arch.outputs.build == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -213,7 +260,7 @@ jobs:
           echo "Uploaded $SIF_URL"
 
       - name: Update metadata field
-        if: steps.upload.outcome == 'success'
+        if: steps.upload.outcome == 'success' && inputs.device != 'gpu'
         run: |
           if [[ -f metadata.yml ]]; then
             METADATA_FILE="metadata.yml"
@@ -226,7 +273,7 @@ jobs:
           rm add_field_to_metadata.py
 
       - name: Commit and push metadata changes
-        if: steps.upload.outcome == 'success'
+        if: steps.upload.outcome == 'success' && inputs.device != 'gpu'
         uses: actions-js/push@master
         with:
           author_name: "ersilia-bot"
@@ -237,21 +284,21 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup conda
-        if: steps.upload.outcome == 'success'
+        if: steps.upload.outcome == 'success' && inputs.device != 'gpu'
         uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
           python-version: "3.12"
 
       - name: Install dependencies in Conda environment
-        if: steps.upload.outcome == 'success'
+        if: steps.upload.outcome == 'success' && inputs.device != 'gpu'
         run: |
           conda run -n base python -m pip install "git+https://github.com/ersilia-os/ersilia.git@${{ inputs.ersilia_ref }}"
           conda run -n base pip install requests pyairtable boto3
 
       # Reads metadata.yml from GitHub, so it must run after the commit above
       - name: Update metadata to AirTable
-        if: steps.upload.outcome == 'success'
+        if: steps.upload.outcome == 'success' && inputs.device != 'gpu'
         env:
           USER_NAME: ${{ github.repository_owner }}
           REPO_NAME: ${{ inputs.repo_name }}
@@ -264,7 +311,7 @@ jobs:
           rm readme_formatter.py
 
       - name: Sync metadata to S3 JSON
-        if: steps.upload.outcome == 'success'
+        if: steps.upload.outcome == 'success' && inputs.device != 'gpu'
         env:
           AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
@@ -275,7 +322,7 @@ jobs:
           rm convert_airtable_to_json.py
 
       - name: Update README file
-        if: steps.upload.outcome == 'success'
+        if: steps.upload.outcome == 'success' && inputs.device != 'gpu'
         run: |
           wget https://raw.githubusercontent.com/ersilia-os/ersilia/${{ inputs.ersilia_ref }}/.github/scripts/airtableops.py
           wget https://raw.githubusercontent.com/ersilia-os/ersilia/${{ inputs.ersilia_ref }}/.github/scripts/readme_formatter.py
@@ -284,7 +331,7 @@ jobs:
           rm readme_formatter.py
 
       - name: Commit and push README changes
-        if: steps.upload.outcome == 'success'
+        if: steps.upload.outcome == 'success' && inputs.device != 'gpu'
         uses: actions-js/push@master
         with:
           author_name: "ersilia-bot"

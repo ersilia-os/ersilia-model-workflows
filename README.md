@@ -23,6 +23,33 @@ Below is a high-level summary of the workflows contained in this repository.
 | 9    | `post-to-slack.yml`         | Posts a comment on Slack when a new issue is opened in the model repository. |
 | 10   | `create-new-issue.yml`      | Creates an issue when a model is updated to assign a tester. This workflow is currently unused and will only be activated during intense model refactoring or incorporation periods. |
 
+## GPU Images
+
+A model can declare a GPU install with a `gpu:` key in its `install.yml`. `.github/scripts/resolve_dockerfile.py` prepares the Dockerfile for either image:
+
+```bash
+python resolve_dockerfile.py <repo_path> <model_id> [cpu|gpu]   # cpu by default
+```
+
+- `cpu` uses the `commands:` of `install.yml` and the `Dockerfile.pip` / `Dockerfile.conda` templates, as before.
+- `gpu` uses the `gpu:` list and the `Dockerfile.pip-gpu` / `Dockerfile.conda-gpu` templates from [ersilia](https://github.com/ersilia-os/ersilia), which pack the model with `ersilia_model_pack --device gpu` and set `ERSILIA_DEVICE=gpu`.
+- If the model has no `gpu:` key, `gpu` mode writes no Dockerfile and exits with code 0. In GitHub Actions it writes `gpu=true` or `gpu=false` to `GITHUB_OUTPUT`, so a workflow can skip the GPU build.
+- `ERSILIA_DOCKERFILES_URL` overrides where the templates are downloaded from (ersilia `master` by default), to test templates before they are merged.
+
+The `Device` metadata field (`CPU`, `GPU`) is accepted by `add_field_to_metadata.py` and placed after `Docker Architecture`.
+
+### GPU images in CI
+
+GPU images are amd64 only and never block the CPU images: every GPU job or step is allowed to fail.
+
+- `upload-ersilia-pack.yml` builds and pushes `ersiliaos/<model>:dev-gpu`, labelled with the commit it was built from. Models without `gpu:` skip the build.
+- `test-model-image.yml` tests `dev-gpu` only when its label matches the commit under test. GitHub-hosted runners have no GPU, so by default it only checks that the image sets `ERSILIA_DEVICE=gpu` and contains `main_gpu.py` and a `run.sh` that switches on it. Pass `gpu_runner` (a runner with an NVIDIA GPU) to run `ersilia test --deep` on it instead. If the test passes and the CPU image was promoted, `dev-gpu` is tagged `latest-gpu` and `<date>-gpu`.
+- `post-model-upload.yml` writes `Device` (`[CPU]` or `[CPU, GPU]`) to the metadata and, on the first release, tags `latest-gpu` as `v1.0.0-gpu`.
+- `retag-release-docker.yml` tags `latest-gpu` as `<release>-gpu` when `Device` lists `GPU`. These are the tags `ersilia fetch --gpu` pulls.
+- `build-upload-sif.yml` with `device: gpu` builds `<model>_<major>-gpu.sif` from the `<version>-gpu` image. It checks the image structure instead of running the model, and does not update the metadata.
+
+Before ersilia-pack, ersilia and this repository are merged, `upload-ersilia-pack.yml` can build from the `gpu` branches with the inputs `scripts_ref`, `ersilia_pack_ref`, `ersilia_ref` and `gpu_base_image_tag` (a base image whose ersilia-pack supports `--device gpu`).
+
 ## License
 
 The code in this repository is available under a GPLv3 License. 

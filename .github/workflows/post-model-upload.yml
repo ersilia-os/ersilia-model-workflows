@@ -99,6 +99,21 @@ jobs:
           name: architecture
           path: .
 
+      # device.txt comes with arch.txt; it lists GPU when latest-gpu was promoted
+      - name: Retag latest-gpu -> release tag-gpu
+        if: steps.check-tags.outputs.has_tags == 'false' && hashFiles('device.txt') != ''
+        env:
+          MODEL_ID: ${{ inputs.repo_name }}
+        run: |
+          if grep -q GPU device.txt; then
+            echo "Retagging ersiliaos/${MODEL_ID}:latest-gpu as ersiliaos/${MODEL_ID}:${TAG}-gpu"
+            docker buildx imagetools create \
+              --tag ersiliaos/${MODEL_ID}:${TAG}-gpu \
+              ersiliaos/${MODEL_ID}:latest-gpu
+          else
+            echo "No GPU image for ${MODEL_ID}."
+          fi
+
       - name: Download amd64 test results
         uses: actions/download-artifact@v4
         with:
@@ -152,6 +167,10 @@ jobs:
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Status" --content "Ready"
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "DockerHub" --content "https://hub.docker.com/r/ersiliaos/${MODEL_ID}"
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Docker Architecture" --content arch.txt
+          if [[ -f device.txt ]]; then
+            DEVICE=$(cat device.txt)
+            python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Device" --content "[${DEVICE//,/, }]"
+          fi
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Image Size" --content "$IMAGE_SIZE"
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Last Packaging Date" --content "$LAST_PACKAGING_DATE"
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Release" --content "$TAG"
@@ -170,7 +189,7 @@ jobs:
         run: |
             rm -rf architecture
             rm -rf test-report-amd64
-            rm -f arch.txt "${MODEL_ID}-test-amd64.json"
+            rm -f arch.txt device.txt "${MODEL_ID}-test-amd64.json"
           
       - name: Commit and push changes done to the Metadata file
         uses: actions-js/push@master # pin@v1.4

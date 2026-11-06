@@ -59,6 +59,36 @@ jobs:
           pip install pyaml
           pip install ruamel.yaml
 
+      # The Device metadata field lists GPU when ersiliaos/<model>:latest-gpu exists
+      - name: Check for a GPU image
+        id: device
+        run: |
+          python - <<'EOF'
+          import json, os
+          path = "metadata.yml" if os.path.exists("metadata.yml") else "metadata.json"
+          with open(path) as f:
+              if path.endswith(".json"):
+                  data = json.load(f)
+              else:
+                  import yaml
+                  data = yaml.safe_load(f)
+          device = data.get("Device") or []
+          if isinstance(device, str):
+              device = [d.strip() for d in device.strip("[]").split(",")]
+          print(f"Device: {device}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"gpu={'true' if 'GPU' in device else 'false'}\n")
+          EOF
+
+      - name: Retag latest-gpu -> release tag-gpu
+        if: steps.device.outputs.gpu == 'true'
+        run: |
+          echo "Retagging ersiliaos/${MODEL}:latest-gpu as ersiliaos/${MODEL}:${RELEASE_TAG}-gpu"
+          docker buildx imagetools create \
+            --tag ersiliaos/${MODEL}:${RELEASE_TAG}-gpu \
+            ersiliaos/${MODEL}:latest-gpu
+          echo "Done."
+
       - name: Update metadata field
         env:
           TAG : ${{ inputs.release_tag }}
