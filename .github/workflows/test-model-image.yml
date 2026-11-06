@@ -9,6 +9,11 @@ on:
       runner:
         required: true
         type: string
+      gpu_runner:
+        description: "Runner with an NVIDIA GPU for a deep test of the GPU image; empty runs structural checks only"
+        required: false
+        type: string
+        default: ""
     secrets:
       DOCKERHUB_USERNAME:
         required: true
@@ -167,9 +172,112 @@ jobs:
             exit 1
           fi
       
+  # Tests ersiliaos/<model>:dev-gpu when the upload run that triggered this one built it.
+  # Without gpu_runner the runner has no GPU, so the model cannot run: the job checks
+  # that the image is the fresh build and selects main_gpu.py, and stops there.
+  test-image-gpu:
+    runs-on: ${{ inputs.gpu_runner || inputs.runner }}
+    continue-on-error: true
+    outputs:
+      built: ${{ steps.fresh.outputs.built }}
+      passed: ${{ steps.check-result.outcome }}
+    env:
+      MODEL_ID: ${{ inputs.repo_name }}
+      IMAGE: ersiliaos/${{ inputs.repo_name }}:dev-gpu
+      # The commit the upload workflow built, stamped on the image as a label
+      REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Check dev-gpu was built from this commit
+        id: fresh
+        run: |
+          if ! docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "No $IMAGE: the model has no GPU image."
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          LABEL=$(docker buildx imagetools inspect "$IMAGE" --format '{{ json .Image }}' \
+            | jq -r '(if has("config") then . else .["linux/amd64"] end) | .config.Labels["org.opencontainers.image.revision"] // empty')
+          if [[ "$LABEL" != "$REVISION" ]]; then
+            echo "$IMAGE is from commit '${LABEL}', not ${REVISION}: the GPU build was skipped or failed."
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - name: Free Disk Space (Ubuntu)
+        if: steps.fresh.outputs.built == 'true'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Check the image selects the GPU code
+        if: steps.fresh.outputs.built == 'true' && inputs.gpu_runner == ''
+        id: structure
+        run: |
+          docker pull "$IMAGE"
+          docker run --rm --entrypoint sh "$IMAGE" -c '
+            set -e
+            test "$ERSILIA_DEVICE" = gpu || { echo "ERSILIA_DEVICE is not gpu"; exit 1; }
+            RUN_SH=$(ls /root/bundles/$MODEL/*/model/framework/run.sh | head -n 1)
+            grep -q ERSILIA_DEVICE "$RUN_SH" || { echo "$RUN_SH does not switch on ERSILIA_DEVICE"; exit 1; }
+            ls /root/bundles/$MODEL/*/model/framework/code/main_gpu.py
+            test -f /root/information.json
+          '
+          echo "Structural checks passed. No GPU on this runner: inference was not tested."
+
+      - name: Set up conda
+        if: steps.fresh.outputs.built == 'true' && inputs.gpu_runner != ''
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: false
+          python-version: "3.12"
+          auto-activate-base: false
+          activate-environment: test
+
+      - name: Install dependencies
+        if: steps.fresh.outputs.built == 'true' && inputs.gpu_runner != ''
+        run: |
+          conda run -n test python -m pip install "ersilia[test] @ git+https://github.com/ersilia-os/ersilia.git"
+
+      # A -gpu tag makes ersilia serve the container with the host GPUs
+      - name: Test GPU image
+        if: steps.fresh.outputs.built == 'true' && inputs.gpu_runner != ''
+        run: |
+          nvidia-smi
+          conda run --no-capture-output -n test bash -c "
+            ersilia -v test $MODEL_ID --deep --from_dockerhub --version dev-gpu --permissive
+          "
+          mv "${MODEL_ID}-test.json" "${MODEL_ID}-test-gpu.json"
+
+      - name: Upload logs as artifacts
+        if: steps.fresh.outputs.built == 'true' && inputs.gpu_runner != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-gpu
+          path: ${{ inputs.repo_name }}-test-gpu.json
+
+      - name: Parse test results
+        id: check-result
+        if: steps.fresh.outputs.built == 'true'
+        run: |
+          if [[ -z "${{ inputs.gpu_runner }}" ]]; then
+            [[ "${{ steps.structure.outcome }}" == "success" ]]
+            exit $?
+          fi
+          TEST_FAILED=$(jq 'recurse | objects | select(map(select(. == false)) | length > 0)' "${MODEL_ID}-test-gpu.json")
+          if [[ -n "$TEST_FAILED" ]]; then
+            echo "Some GPU tests failed."
+            exit 1
+          fi
+
   retag-image:
     runs-on: ${{ inputs.runner }}
-    needs: [test-image-amd64, test-image-arm64]
+    needs: [test-image-amd64, test-image-arm64, test-image-gpu]
     if: always()
     outputs:
       status: ${{ steps.retag-step.outcome }}
@@ -223,8 +331,34 @@ jobs:
           echo "$ARCH" > arch.txt
           cat arch.txt 
 
+      # Only reached when the CPU image was promoted to latest
+      - name: Promote GPU image to latest-gpu
+        id: retag-gpu
+        if: needs.test-image-gpu.outputs.built == 'true' && needs.test-image-gpu.outputs.passed == 'success'
+        continue-on-error: true
+        env:
+          MODEL: ${{ github.event.repository.name }}
+        run: |
+          docker buildx imagetools create \
+            --tag ersiliaos/$MODEL:$(date +%Y-%m-%d)-gpu \
+            --tag ersiliaos/$MODEL:latest-gpu \
+            ersiliaos/$MODEL:dev-gpu
+          echo "Tagged ersiliaos/$MODEL:dev-gpu as latest-gpu."
+
+      # Read by post-model-upload for the Device metadata field
+      - name: Save devices to device.txt
+        run: |
+          if [[ "${{ steps.retag-gpu.outcome }}" == "success" ]]; then
+            echo "CPU,GPU" > device.txt
+          else
+            echo "CPU" > device.txt
+          fi
+          cat device.txt
+
       - name: Upload Artifact Architecture
         uses: actions/upload-artifact@v4.5.0
         with:
           name: architecture
-          path: arch.txt
+          path: |
+            arch.txt
+            device.txt

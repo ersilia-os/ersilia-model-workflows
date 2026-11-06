@@ -9,6 +9,28 @@ on:
       runner:
         required: true
         type: string
+      # The inputs below only affect the GPU image; their defaults suit production.
+      # Override them to test GPU builds before the branches are merged.
+      scripts_ref:
+        description: "Branch of ersilia-model-workflows to take resolve_dockerfile.py from"
+        required: false
+        type: string
+        default: "main"
+      ersilia_pack_ref:
+        description: "Branch of ersilia-pack to install (needs --device gpu support)"
+        required: false
+        type: string
+        default: "main"
+      ersilia_ref:
+        description: "Branch of ersilia to take the Dockerfile.<flavor>-gpu templates from"
+        required: false
+        type: string
+        default: "master"
+      gpu_base_image_tag:
+        description: "Tag of the ersiliaos/ersiliapack-pyXY base image for the GPU build"
+        required: false
+        type: string
+        default: "latest"
     secrets:
       DOCKERHUB_USERNAME:
         required: true
@@ -159,6 +181,98 @@ jobs:
           platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ersiliaos/${{ inputs.repo_name }}:dev-arm64
+
+  # Builds ersiliaos/<model>:dev-gpu (amd64 only) from the gpu: section of install.yml.
+  # Models without a gpu: section skip the build. A failure here never fails the
+  # workflow, so the CPU images are published as before.
+  build-ersilia-pack-image-gpu:
+    runs-on: ${{ inputs.runner }}
+    continue-on-error: true
+    steps:
+
+      - name: Checkout model repository
+        uses: actions/checkout@v4
+        with:
+          repository: ersilia-os/${{ inputs.repo_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          lfs: true
+
+      - run: git lfs pull
+
+      - name: Setup Python for Ersilia Pack
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install ersilia-pack
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          command: |
+            python -m pip install "git+https://github.com/ersilia-os/ersilia-pack.git@${{ inputs.ersilia_pack_ref }}"
+            python -m pip install requests
+            wget -O resolve_dockerfile.py https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/${{ inputs.scripts_ref }}/.github/scripts/resolve_dockerfile.py
+
+      # Writes gpu=true/false to GITHUB_OUTPUT, and ../Dockerfile only when gpu=true
+      - name: Generate the GPU Dockerfile
+        id: resolve
+        env:
+          ERSILIA_DOCKERFILES_URL: https://raw.githubusercontent.com/ersilia-os/ersilia/${{ inputs.ersilia_ref }}/dockerfiles/dockerize-ersiliapack/model
+        run: |
+          python resolve_dockerfile.py . ${{ inputs.repo_name }} gpu
+          rm resolve_dockerfile.py
+
+      - name: Use another base image tag
+        if: steps.resolve.outputs.gpu == 'true' && inputs.gpu_base_image_tag != 'latest'
+        run: |
+          sed -i -E "1s|^(FROM ersiliaos/ersiliapack-py[0-9]+):latest|\1:${{ inputs.gpu_base_image_tag }}|" ../Dockerfile
+          head -n 1 ../Dockerfile
+
+      - name: Free Disk Space (Ubuntu)
+        if: steps.resolve.outputs.gpu == 'true'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Download model artifacts via eosvc (if access.json present)
+        if: steps.resolve.outputs.gpu == 'true'
+        run: |
+          if [ -f "access.json" ]; then
+            echo "access.json detected. Installing eosvc and downloading artifacts."
+            pip install "eosvc>=1.3.0"
+            eosvc download --path .
+          else
+            echo "No access.json found. Skipping eosvc download."
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.resolve.outputs.gpu == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: steps.resolve.outputs.gpu == 'true'
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      # The revision label lets test-model-image tell this build from a stale dev-gpu
+      - name: Build and push GPU image
+        if: steps.resolve.outputs.gpu == 'true'
+        uses: docker/build-push-action@v6.7.0
+        timeout-minutes: 90
+        with:
+          context: ../
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ersiliaos/${{ inputs.repo_name }}:dev-gpu
+          labels: org.opencontainers.image.revision=${{ github.sha }}
 
   merge-multiarch:
     if: always()  # <-- this ensures the job runs even if needs.* fail
