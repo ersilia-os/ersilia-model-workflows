@@ -13,6 +13,11 @@ on:
       release_tag:
         required: true
         type: string
+      ref:
+        description: "Ref to check out before writing Release. Pass main when called after the bot has pushed commits; empty keeps the event's ref."
+        required: false
+        type: string
+        default: ""
       runner:
         required: true
         type: string
@@ -36,7 +41,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+        with:
+          ref: ${{ inputs.ref }}
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 

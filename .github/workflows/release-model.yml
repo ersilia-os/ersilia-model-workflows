@@ -1,0 +1,99 @@
+name: Release model
+
+# Creates the next GitHub release of a model at main HEAD, after every other
+# job of the chain has finished, so the tag never ends up behind the bot's
+# metadata and README commits.
+#
+# The release is created with GITHUB_TOKEN, which does not fire the `release`
+# event. The caller therefore chains retag-release-docker.yml and
+# build-upload-sif.yml itself, using the `tag` output.
+
+on:
+  workflow_call:
+    inputs:
+      repo_name:
+        required: true
+        type: string
+      bump:
+        description: "patch, minor, major, or initial (only when the repo has no tags)"
+        required: true
+        type: string
+      sha:
+        description: "Commit that was merged; used to avoid releasing it twice"
+        required: true
+        type: string
+      pr:
+        description: "Number of the merged pull request, for the release notes"
+        required: false
+        type: string
+        default: ""
+    outputs:
+      created:
+        value: ${{ jobs.release.outputs.created }}
+      tag:
+        value: ${{ jobs.release.outputs.tag }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Two merges in quick succession release one after the other, never in parallel
+    concurrency:
+      group: release-${{ inputs.repo_name }}
+      cancel-in-progress: false
+    outputs:
+      created: ${{ steps.release.outputs.created }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Checkout main with tags
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          lfs: false
+
+      - name: Create release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ersilia-os/${{ inputs.repo_name }}
+          BUMP: ${{ inputs.bump }}
+          SHA: ${{ inputs.sha }}
+          PR: ${{ inputs.pr }}
+        run: |
+          git fetch --tags --force origin
+          # Version sort: v1.10.0 comes after v1.9.0
+          LATEST="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+
+          if [[ -z "$LATEST" ]]; then
+            NEXT="v1.0.0"
+          elif git merge-base --is-ancestor "$SHA" "$LATEST" 2>/dev/null; then
+            echo "$SHA is already part of $LATEST: nothing to release."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+            case "$BUMP" in
+              major) NEXT="v$((MAJOR + 1)).0.0" ;;
+              minor) NEXT="v${MAJOR}.$((MINOR + 1)).0" ;;
+              patch) NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+              *)
+                echo "::error::Bump '$BUMP' is not valid when the repo already has tags (latest: $LATEST)."
+                exit 1
+                ;;
+            esac
+          fi
+
+          TARGET="$(git rev-parse HEAD)"
+          NOTES="Version bump: ${BUMP}"
+          [[ -n "$PR" ]] && NOTES="${NOTES} (from #${PR})"
+          echo "Creating ${NEXT} (previous: ${LATEST:-none}) at ${TARGET}"
+          gh release create "$NEXT" -R "$REPO" \
+            --target "$TARGET" \
+            --title "Release ${NEXT}" \
+            --notes "$NOTES" \
+            --generate-notes
+
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "### Released ${NEXT} (${BUMP}, previous ${LATEST:-none})" >> "$GITHUB_STEP_SUMMARY"

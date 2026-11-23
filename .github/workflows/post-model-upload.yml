@@ -13,6 +13,11 @@ on:
       runner:
         required: true
         type: string
+      manage_release:
+        description: "Create v1.0.0 when the repo has no tags and write the latest tag into Release. Set false when release-model.yml creates the releases."
+        required: false
+        type: boolean
+        default: true
     secrets:
       AIRTABLE_API_KEY:
         required: true
@@ -43,6 +48,7 @@ jobs:
       
       - name: Check if any tag exists
         id: check-tags
+        if: inputs.manage_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -154,7 +160,10 @@ jobs:
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Docker Architecture" --content arch.txt
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Image Size" --content "$IMAGE_SIZE"
           python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Last Packaging Date" --content "$LAST_PACKAGING_DATE"
-          python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Release" --content "$TAG"
+          # Empty when manage_release is false: release-model.yml and the retag write Release
+          if [[ -n "$TAG" ]]; then
+            python add_field_to_metadata.py --metadata_file "$METADATA_FILE" --field "Release" --content "$TAG"
+          fi
           for i in 1 2 3 4 5; do
             FIELD_NAME="Computational Performance ${i}"
             VALUE_VAR="COMPUTATIONAL_PERFORMANCE_${i}"

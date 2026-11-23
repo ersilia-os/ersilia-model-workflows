@@ -14,6 +14,11 @@ on:
       runner:
         required: true
         type: string
+      skip_if_unchanged:
+        description: "Skip the rebuild when the image of this release is the same as the previous release (a PATCH); only the release label on the .sif is updated"
+        required: false
+        type: boolean
+        default: false
     secrets:
       AWS_ACCESS_KEY:
         required: false
@@ -51,9 +56,51 @@ jobs:
         run: |
           git pull --rebase origin main
 
+      # A PATCH release retags the image of the previous release, so the .sif
+      # would be identical: keep the file and only update its release label
+      - name: Decide whether to rebuild
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SKIP_IF_UNCHANGED: ${{ inputs.skip_if_unchanged }}
+        run: |
+          SIF_KEY="${MODEL_ID}_${VERSION%%.*}.sif"
+          SIF_URL="https://${SIF_BUCKET}.s3.${SIF_REGION}.amazonaws.com/${SIF_KEY}"
+          REBUILD=true
+          if [[ "$SKIP_IF_UNCHANGED" == "true" ]]; then
+            PREVIOUS="$(gh api "repos/ersilia-os/${MODEL_ID}/tags" --paginate --jq '.[].name' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V \
+              | awk -v v="$VERSION" '$0 == v { print prev; exit } { prev = $0 }')"
+            digest() {
+              docker buildx imagetools inspect "ersiliaos/${MODEL_ID}:$1" --format '{{json .Manifest}}' | jq -r .digest
+            }
+            if [[ -n "$PREVIOUS" && "${PREVIOUS%%.*}" == "${VERSION%%.*}" ]] \
+              && [[ "$(digest "$VERSION")" == "$(digest "$PREVIOUS")" ]] \
+              && curl -sfI "$SIF_URL" > /dev/null; then
+              echo "Image of $VERSION is the same as $PREVIOUS and $SIF_KEY exists: no rebuild."
+              REBUILD=false
+            fi
+          fi
+          echo "rebuild=$REBUILD" >> "$GITHUB_OUTPUT"
+          echo "sif_key=$SIF_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Update release label only
+        if: steps.decide.outputs.rebuild == 'false'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SIF_KEY: ${{ steps.decide.outputs.sif_key }}
+        run: |
+          # A server-side copy onto itself: nothing is downloaded and the URL stays the same
+          aws s3 cp "s3://${SIF_BUCKET}/${SIF_KEY}" "s3://${SIF_BUCKET}/${SIF_KEY}" \
+            --region "$SIF_REGION" --metadata "release=${VERSION}" --metadata-directive REPLACE \
+            --content-type application/octet-stream
+          curl -sI "https://${SIF_BUCKET}.s3.${SIF_REGION}.amazonaws.com/${SIF_KEY}" | grep -i x-amz-meta-release
+
       # ---- Dependencies ----
 
       - name: Install Apptainer
+        if: steps.decide.outputs.rebuild == 'true'
         run: |
           # The runner's packages.microsoft.com repo ships a newer containernetworking-plugins
           # (an apptainer dependency) and rate-limits downloads (429); prefer Ubuntu's copy
@@ -72,6 +119,7 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Set up Python
+        if: steps.decide.outputs.rebuild == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -79,6 +127,7 @@ jobs:
       # No conda here: setup-miniconda appends `set -eo pipefail` to ~/.profile, and
       # $HOME is mounted into the .sif, where the login shell (dash) rejects it
       - name: Install Python dependencies
+        if: steps.decide.outputs.rebuild == 'true'
         run: |
           pip install ruamel.yaml
           pip install "git+https://github.com/ersilia-os/ersilia-apptainer.git"
@@ -89,6 +138,7 @@ jobs:
       # ---- Build, test and upload ----
 
       - name: Set paths
+        if: steps.decide.outputs.rebuild == 'true'
         run: |
           # Same <model>_<major>.sif name ersilia_apptainer gives the file;
           # "Build .sif" fails if the two ever disagree
@@ -107,6 +157,7 @@ jobs:
           df -h "$RUNNER_TEMP"
 
       - name: Build .sif
+        if: steps.decide.outputs.rebuild == 'true'
         run: |
           sudo -E env "PATH=$PATH" ersilia_apptainer create \
             --model "$MODEL_ID" \
@@ -120,6 +171,7 @@ jobs:
           ls -lh "$SIF_PATH"
 
       - name: Smoke test
+        if: steps.decide.outputs.rebuild == 'true'
         run: |
           EXAMPLES=/opt/ersilia/model/framework/examples
           singularity exec "$SIF_PATH" cat "$EXAMPLES/run_input.csv" > "$WORK_DIR/input.csv" \
@@ -154,11 +206,14 @@ jobs:
 
       - name: Upload to S3
         id: upload
+        if: steps.decide.outputs.rebuild == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          aws s3 cp "$SIF_PATH" "s3://${SIF_BUCKET}/${SIF_NAME}" --region "$SIF_REGION"
+          # The release label tells which release the file holds: the name has the major only
+          aws s3 cp "$SIF_PATH" "s3://${SIF_BUCKET}/${SIF_NAME}" --region "$SIF_REGION" \
+            --metadata "release=${VERSION}" --content-type application/octet-stream
           curl -sfI "$SIF_URL" > /dev/null || { echo "Uploaded, but $SIF_URL is not publicly reachable"; exit 1; }
           echo "url=$SIF_URL" >> "$GITHUB_OUTPUT"
           echo "Uploaded $SIF_URL"

@@ -1,0 +1,100 @@
+name: Resolve release
+
+# Reads the version label of the pull request merged at `sha` and decides:
+# - release:    whether this run ends in a new GitHub release
+# - bump:       patch, minor, major or initial (no tags yet: v1.0.0)
+# - skip_build: true for PATCH and no-release, where the image does not change
+#
+# A run that does not come from a merged pull request (workflow_dispatch, or an
+# admin pushing past the ruleset) rebuilds but never releases, except the first
+# release of a new model.
+
+on:
+  workflow_call:
+    inputs:
+      repo_name:
+        required: true
+        type: string
+      sha:
+        description: "Commit pushed to main"
+        required: true
+        type: string
+      event:
+        description: "Event that started the chain: push or workflow_dispatch"
+        required: true
+        type: string
+    outputs:
+      release:
+        value: ${{ jobs.resolve.outputs.release }}
+      bump:
+        value: ${{ jobs.resolve.outputs.bump }}
+      skip_build:
+        value: ${{ jobs.resolve.outputs.skip_build }}
+      pr:
+        value: ${{ jobs.resolve.outputs.pr }}
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.resolve.outputs.release }}
+      bump: ${{ steps.resolve.outputs.bump }}
+      skip_build: ${{ steps.resolve.outputs.skip_build }}
+      pr: ${{ steps.resolve.outputs.pr }}
+    steps:
+      - name: Resolve label and route
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ersilia-os/${{ inputs.repo_name }}
+          SHA: ${{ inputs.sha }}
+          EVENT: ${{ inputs.event }}
+        run: |
+          HAS_TAGS=false
+          if gh api "repos/${REPO}/tags" --paginate --jq '.[].name' | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            HAS_TAGS=true
+          fi
+
+          PR="" ; LABEL=""
+          if [[ "$EVENT" == "push" ]]; then
+            gh api "repos/${REPO}/commits/${SHA}/pulls" > pulls.json
+            # Prefer the PR whose merge commit is exactly this push
+            PR="$(jq -r --arg sha "$SHA" '[.[] | select(.merged_at != null)] | (map(select(.merge_commit_sha == $sha)) + .) | first | .number // empty' pulls.json)"
+            if [[ -n "$PR" ]]; then
+              LABEL="$(jq -r --argjson n "$PR" '.[] | select(.number == $n) | [.labels[].name | select(test("^(semver:(patch|minor|major)|no-release)$"))] | join(",")' pulls.json)"
+            fi
+          fi
+
+          case "$LABEL" in
+            semver:patch) BUMP=patch ;;
+            semver:minor) BUMP=minor ;;
+            semver:major) BUMP=major ;;
+            no-release)   BUMP=none ;;
+            *)            BUMP="" ;;
+          esac
+
+          if [[ "$HAS_TAGS" == "false" ]]; then
+            # First release of a new model: always build and release v1.0.0
+            RELEASE=true ; BUMP=initial ; SKIP_BUILD=false
+          elif [[ "$BUMP" == "patch" ]]; then
+            RELEASE=true ; SKIP_BUILD=true
+          elif [[ "$BUMP" == "none" ]]; then
+            RELEASE=false ; SKIP_BUILD=true
+          elif [[ -n "$BUMP" ]]; then
+            RELEASE=true ; SKIP_BUILD=false
+          else
+            RELEASE=false ; SKIP_BUILD=false
+            echo "::warning::No merged pull request with a version label for ${SHA} (event: ${EVENT}). The model is rebuilt but not released."
+          fi
+
+          {
+            echo "release=$RELEASE"
+            echo "bump=$BUMP"
+            echo "skip_build=$SKIP_BUILD"
+            echo "pr=$PR"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release route"
+            echo "- PR: ${PR:-none}; label: ${LABEL:-none}; tags exist: $HAS_TAGS"
+            echo "- bump: \`${BUMP:-none}\`; release: \`$RELEASE\`; skip build: \`$SKIP_BUILD\`"
+          } >> "$GITHUB_STEP_SUMMARY"

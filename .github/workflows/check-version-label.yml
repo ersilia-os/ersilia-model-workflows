@@ -1,0 +1,180 @@
+name: Check version label
+
+# Checks that a model pull request carries exactly one version label
+# (semver:patch, semver:minor, semver:major or no-release) and that the label is
+# not lower than the minimum bump detected from the change:
+#
+#   detect        classify the changed files (seconds)
+#   run-examples  only when code, dependencies or checkpoints changed: run the
+#                 model on the example input and compare with main's example
+#                 output (beyond 1e-4 = MAJOR). The result is cached per commit,
+#                 so adding or changing a label does not run the model again.
+#   verdict       compare the label with the detected minimum. Make this job a
+#                 required status check.
+#
+# The caller must run on pull_request with types
+# [opened, synchronize, reopened, labeled, unlabeled].
+
+on:
+  workflow_call:
+    inputs:
+      repo_name:
+        required: true
+        type: string
+      runner:
+        required: false
+        type: string
+        default: ubuntu-latest
+
+env:
+  SCRIPT_URL: https://raw.githubusercontent.com/ersilia-os/ersilia-model-workflows/main/.github/scripts/detect_version_bump.py
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_run: ${{ steps.files.outputs.needs_run }}
+      fixed: ${{ steps.files.outputs.fixed }}
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+          lfs: false
+          persist-credentials: false
+
+      - name: Classify changed files
+        id: files
+        run: |
+          pip install --quiet pyyaml
+          wget -q -O "$RUNNER_TEMP/detect_version_bump.py" "$SCRIPT_URL"
+          python "$RUNNER_TEMP/detect_version_bump.py" files --base "$BASE_SHA" --out "$RUNNER_TEMP/files.json"
+          echo "needs_run=$(jq -r .needs_run "$RUNNER_TEMP/files.json")" >> "$GITHUB_OUTPUT"
+          echo "fixed=$(jq -r .fixed_output "$RUNNER_TEMP/files.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4.5.0
+        with:
+          name: version-files
+          path: ${{ runner.temp }}/files.json
+          retention-days: 7
+
+  run-examples:
+    needs: detect
+    if: needs.detect.outputs.needs_run == 'true'
+    runs-on: ${{ inputs.runner }}
+    env:
+      MODEL_ID: ${{ inputs.repo_name }}
+      RESULT: ${{ github.workspace }}/../version-outputs.json
+    steps:
+      - name: Restore result for this commit
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/../version-outputs.json
+          key: version-outputs-${{ github.event.pull_request.head.sha }}-${{ github.event.pull_request.base.sha }}
+
+      - name: Free disk space
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: false
+
+      # The workspace folder is named after the repository, which is what
+      # `ersilia fetch --from_dir` takes as the model identifier
+      - name: Checkout pull request
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+          lfs: true
+          persist-credentials: false
+
+      - name: Set up conda
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: "3.12"
+          auto-activate-base: false
+          activate-environment: test
+
+      - name: Install ersilia
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          conda run -n test python -m pip install 'ersilia @ git+https://github.com/ersilia-os/ersilia.git' eosvc pyyaml
+
+      - name: Download checkpoints
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          if [ -f access.json ] && python3 -c "import json, sys; sys.exit(0 if 'checkpoints' in json.load(open('access.json')) else 1)"; then
+            conda run -n test eosvc download --path model/checkpoints
+          fi
+
+      - name: Build the model environment
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          conda run -n test ersilia -v fetch "$MODEL_ID" --from_dir "$GITHUB_WORKSPACE"
+
+      # Same call as the bash check of `ersilia test`: run.sh writes the same
+      # format as examples/run_output.csv
+      - name: Run the model on the example input
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          cd model/framework
+          conda run -n "$MODEL_ID" bash ./run.sh . "$PWD/examples/run_input.csv" "$RUNNER_TEMP/fresh_output.csv" || true
+
+      - name: Compare with main's example output
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          FIXED: ${{ needs.detect.outputs.fixed }}
+        run: |
+          wget -q -O "$RUNNER_TEMP/detect_version_bump.py" "$SCRIPT_URL"
+          FLAG=""
+          [[ "$FIXED" == "true" ]] && FLAG="--fixed"
+          conda run -n test python "$RUNNER_TEMP/detect_version_bump.py" outputs \
+            --base "$BASE_SHA" --fresh "$RUNNER_TEMP/fresh_output.csv" $FLAG --out "$RESULT"
+
+      - name: Save result for this commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/../version-outputs.json
+          key: version-outputs-${{ github.event.pull_request.head.sha }}-${{ github.event.pull_request.base.sha }}
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4.5.0
+        with:
+          name: version-outputs
+          path: ${{ github.workspace }}/../version-outputs.json
+          retention-days: 7
+
+  verdict:
+    needs: [detect, run-examples]
+    if: always() && needs.detect.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: version-*
+          path: results
+          merge-multiple: true
+
+      - name: Check the label
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          pip install --quiet pyyaml
+          wget -q -O "$RUNNER_TEMP/detect_version_bump.py" "$SCRIPT_URL"
+          OUTPUTS=""
+          [[ -f results/version-outputs.json ]] && OUTPUTS="results/version-outputs.json"
+          python "$RUNNER_TEMP/detect_version_bump.py" verdict \
+            --files results/files.json --outputs "$OUTPUTS" \
+            --labels "$LABELS" --out "$RUNNER_TEMP/verdict.json"
